@@ -1,0 +1,11 @@
+---
+namespace: cz.cesnet.nemea
+custom_actions:
+  - id: file
+    file:
+      path: ../../data/idea_mg.json
+rules:
+- id: 1
+  condition: Null
+  actions:
+  - file

@@ -1,0 +1,40 @@
+{% extends "main.html" %}
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats -->
+
+{% block content %}
+<div class="edit">
+    <div class="edit-wrap bulk-edit">
+        <h2>Bulk edit</h2>
+        <p class="small-text">(Existing classifications, notes and classification reasons for following URLs will be overwritten by this edit.)</p>
+            <form method="POST" action="{{ url_for('bulk_edit_action') }}" enctype="application/x-www-form-urlencoded">
+                <label>Selected URLs:</label>
+                <div class="selected-urls-wrap">          
+                    {% for url in selected_urls %}
+                    <div class="selected-url">
+                        <input type="hidden" name="selected_urls_list[]" value="{{url}}">
+                        <a href="{{ url_for('detail', url=url, show=show) }}" target="_blank"><span>{{url}}</span></a>
+                        <button type="button" onclick="removeSelectedURLElement(this)">X</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <label for="class">Classification:</label>
+                <select name="class">
+                    <option value="" selected>---select---</option>
+                    <option value="malicious">Malicious </option>
+                    <option value="harmless">Harmless</option>
+                    <option value="unreachable">Unreachable</option>
+                    <option value="unclassified">Unclassified</option>
+                    <option value="invalid">Invalid</option>
+                </select>
+                <label for="reason">Clasification reason:</label>
+                <input type="text" id="reason" name="reason">
+                <label for="lname">Note:</label>
+                <input type="text" id="note" name="note">
+                <input type="submit" class="btn-style" value="Save">
+            </form>
+
+    </div>
+
+</div>
+
+{% endblock %}

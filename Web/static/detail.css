@@ -1,0 +1,201 @@
+.detail {
+    max-width: 1200px;
+    margin: 20px auto;
+}
+
+.detail .header-wrap {
+    display: flex;
+    justify-content: left;
+    align-items: baseline;
+    margin-left: 20px;
+}
+
+.detail .header-wrap h2 {
+    margin: 10px 0;
+    max-width: 900px;
+    overflow-wrap: anywhere;
+}
+
+.detail .status {
+    font-weight: bold;
+}
+
+.detail .status.active {
+    color: #29c000;
+}
+
+.detail .status.inactive {
+    color: #791111;
+}
+
+.detail .edit_btn {
+    background-image: url("./img/edit.png");
+    background-size: cover;
+    width: 25px;
+    height: 25px;
+    border: none;
+    margin-left: 20px;
+    pointer-events:all;
+}
+
+
+/* .detail dl{
+    margin: 20px;
+} */
+
+.detail p {
+    margin: 0;
+    padding: 0;
+}
+
+.detail dt {
+    margin-left: 5px;
+    color: #818181;
+}
+
+.detail .content {
+    margin: 20px;
+}
+
+.detail tr td:first-child {
+    color: #818181;
+}
+
+.detail tr td:nth-child(2) {
+    padding-left: 30px;
+}
+
+.detail tr td:first-child::after {
+    content: ":";
+}
+
+/* .detail dl dt::after {
+    content: ":";
+} */
+
+.detail .info tr {
+    margin:  20px;
+}
+
+
+.detail .reason-link {
+    display: flex;
+    flex-direction: row;
+    justify-content: left;
+    align-items: center;
+}
+
+.detail .reason-link img {
+    height: 18px;
+    width: 18px;
+    margin-left: 10px
+}
+
+.detail .back-btn {
+    margin: 20px 40px;
+    width: 100px;
+    height: 30px;
+    float: right;
+}
+
+.detail .wrap {
+    background-color: #f5f5f5;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+.detail .classification p::before {
+    display: inline-block;
+    content: " ";
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 10px;
+}
+
+.detail .classification p {
+    padding: 0;
+    margin: 0;
+}
+
+
+.detail .sessions {
+    background-color: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 200px;
+    overflow: scroll;
+    margin: 10px;
+}
+
+/* .detail .sessions .session-wrap {
+    flex-direction: row;
+    justify-content: left;
+    align-items: flex-start;
+} */
+
+ .detail .sessions .mentat /* not working to do */
+{
+    width: 20px;
+    margin: 10px 0;
+    margin-right: 20px;
+}
+
+.detail .session-wrap{
+    padding: 5px 0;
+    border-bottom: 1px solid #ddd;
+    margin: 0;
+    width: 100%;
+    display: flex;
+}
+
+.detail .nerd-img{
+    width: 20px;
+    margin-right: 10px;
+}
+
+.detail .ip{
+    display: flex;
+    align-items: center;
+}
+
+.detail .session{
+    overflow-wrap: break-word;
+    font-family: "Lucida Console", "Courier New", monospace;
+    font-size: smaller;
+    margin: 0;
+}
+
+.detail .session:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.detail .session:first-child {
+    padding-top: 0;
+}
+
+.detail .buttons {
+    display: flex;
+    flex-direction: row;
+    justify-content: right;
+    margin: 20px 0;
+}
+
+.detail .back-btn,
+.detail .reevaluate-btn {
+    margin: 0 10px;
+}
+
+.detail .to-be-evaluated {
+    align-self: flex-start;
+    padding: 2px 10px;
+    background-color: cadetblue;
+    color: white;
+    display: block;
+    font-size: small;
+    height: 20px;
+    border-radius: 20px;
+    margin: 10px;
+}

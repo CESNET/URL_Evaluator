@@ -1,0 +1,7 @@
+# Path to file with malicious URLs
+# url_file_path: "./url"
+db_path: "./url.sqlite"
+bl_path: "./Blacklists/blacklist.txt"
+virustotal_key: ""
+limits:
+  malicious: 0.2

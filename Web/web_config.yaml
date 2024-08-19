@@ -1,0 +1,4 @@
+# Description: Configuration file for the web application
+db_path: ""
+misp_url: "" # MISP instance 
+misp_key: "" # MISP API key

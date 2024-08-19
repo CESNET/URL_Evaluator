@@ -1,0 +1,177 @@
+{% extends "main.html" %}
+
+{% block content %}
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 
+    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated, 
+    12. file_mime_type, 13. content_size, 14. threat_label 
+    15. status, 16. active_last, 17. last_edit-->
+<div class="detail">
+    <div class="wrap">
+        <div class="header-wrap">
+            {% if url["status"] == 'active' %} 
+                <svg height="20" width="20">
+                    <circle cx="5" cy="10" r="5" fill="green" />
+                </svg>
+            {% endif %}
+            <h2
+                class="classification {{url.classification}}">
+                {{ url.url }}</h2>
+            
+            {% if url.evaluated == 'no' %} <p class="to-be-evaluated">to be evaluated</p>{% endif %}
+            <button title="Edit" class="edit_btn"
+                onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
+        </div>
+
+        <div class="content">
+        <table class="info">
+            <tbody>
+                <tr>
+                    <td>Classification</td>
+                    <td
+                        class="classification {{url.classification}}">
+                        <p>{{ url.classification }}</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Status</td>
+                    <td class="status {{url["status"]}}">{{ url["status"] }} {% if url["status"] == 'inactive' %} (not active for {{not_active}} days) {% endif %}</td>
+                </tr>
+                {% if url["status"] == 'inactive' %}
+                <tr>
+                    <td>Active last</td>
+                    <td>{{ url.last_active }}</td>
+                {% endif %}
+                <tr>
+                    <td>First seen</td>
+                    <td>{{ url.first_seen }}</td>
+                </tr>
+                <tr>
+                    <td>Last seen</td>
+                    <td>{{ url.last_seen }}</td>
+                </tr>
+                <tr>
+                    <td>Number of occurrences</td>
+                    <td>{{ url.occurrences }}</td>
+                </tr>
+                <tr>
+                    <td>Classification reason</td>
+                    <td>
+                        <div class="reason-link">
+                            <p>{{ url.reason }}</p>
+                            {% if links["reason-link"] %}
+                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Source</td>
+                    <td>{{ url.src }}</td>
+                </tr>
+                {% if url.hash != "" %}
+                <tr>
+                    <td>Hash</td>
+                    
+                    <td>
+                        <div class="reason-link">
+                            <p>{{ url.hash }}</p>
+                            <a class="link" href="{{ links["joe-sandbox"] }}" target=”_blank” title="Joe sandbox analysis"><img src="{{ url_for("static", filename="img/joe_sendbox.gif") }}" alt="link"></a>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% if url.vt_stats != "" %}
+                <tr>
+                    <td>VirusTotal statistics</td>
+                    <td> <div class="reason-link">
+                        <p>{{ url.vt_stats}}</p>
+                            {% if link %}
+                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                            {% endif %} 
+                        </div></td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <td>Reported</td>
+                    <td>
+                        <div class="reason-link">
+                            <p>{{ url.reported }}</p>
+                            {% if link_misp %}
+                                <a class="link" href="{{ links["misp"] }}" target=”_blank” title="MISP event"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% if url.note %}
+                <tr>
+                    <td>Note</td>
+                    <td>{{ url.note }}</td>
+                </tr>
+                {% endif %}
+                {% if url.file_mime_type %}
+                <tr>
+                    <td>File mime type</td>
+                    <td>{{ url.file_mime_type }}</td>
+                </tr>
+                {% endif %}
+                {% if url.content_size %}
+                <tr>
+                    <td>Content size</td>
+                    <td>{{ url.content_size }} bytes</td>
+                </tr>
+                {% endif %}
+                {% if url.threat_label %}
+                <tr>
+                    <td>Threat label</td>
+                    <td>{{ url.threat_label }}</td>
+                </tr>
+                {% endif %}
+                {% if url.last_edit != "" %}
+                <tr>
+                    <td>Last edited</td>
+                    <td>{{ url.last_edit }}</td>
+                </tr>
+                {% endif %}
+                {% if url.ip %}
+                <tr>
+                    <td>IP</td>
+                    <td>
+                        <a class="ip" href="https://nerd.cesnet.cz/nerd/ip/{{ url.ip }}" target="_blank" title="NERD"><img class="nerd-img" src="{{ url_for("static", filename="img/nerd.png") }}" alt="NERD">
+                            {{ url.ip }}
+                        </a>
+                        <!-- <p></p> -->
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        {% if sessions: %}
+            <dl>
+                <dt>Sessions</dt>
+            <dd class="sessions">
+                {% for session in sessions %}
+                    <div class="session-wrap">
+                        {% if session[1] %}
+                            <a target=”_blank” href="https://mentat-hub.cesnet.cz/mentat/events/{{session[1]}}/show" title="Event detail"><img class="mentat" src="{{ url_for("static", filename="img/mentat.png") }}"> </a>
+                        {% endif %}
+                        <pre class="session">{{ session[0] }}</pre>
+                    </div>
+                {% endfor %}
+            </dd>
+            </dl>
+        {% endif %}
+
+        </div>
+
+    </div> 
+    <div class="buttons">
+        {% if url.evaluated == 'yes' %}
+        <form method="post">
+            <input type="submit" class="reevaluate-btn btn-style" value="Re-evaluate">
+        </form>
+        {% endif %}
+        <button class="back-btn btn-style" onclick="location.href='{{ url_for('main', show=show)}}'">Back</button>
+    </div>
+</div>
+{% endblock %}

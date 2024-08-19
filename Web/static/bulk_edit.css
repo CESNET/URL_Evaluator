@@ -1,0 +1,35 @@
+.selected-urls-wrap {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: left;
+    align-items: center;
+}
+
+.selected-urls-wrap .selected-url {
+    font-size: small;
+    padding: 2px 5px;
+    background-color: rgb(122, 122, 163);
+    border-radius: 20px;
+    margin: 2px;
+}
+
+.selected-urls-wrap .selected-url a {
+    color: white;
+}
+.selected-urls-wrap .selected-url button {
+    background-color: transparent;
+    border: none;
+    color: rgb(59, 59, 89);;
+}
+
+.bulk-edit .small-text {
+    font-size: small;
+    margin: 0;
+    padding: 1px;
+    color: grey;
+}
+
+.bulk-edit h2 {
+    margin-bottom: 0;
+}

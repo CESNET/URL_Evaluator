@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>URL Evaluator</title>
+  <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+  <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+</head>
+
+<body>
+  <div>
+    <header>
+      <div class="header-wrapper">
+        <h2><a class="clear-page" href="{{ url_for('main', page=1, clear_filters='True') }}">URL Evaluator</a></h2>
+        <nav>
+          <ul>
+            <li><a
+                class="clear-page {% if show!='malicious' and show!='unclassified' and show!='not_evaluated' %} active {% endif %}"
+                href="{{ url_for('main', page=1, clear_filters='True') }}">All</a></li>
+            <li><a class="clear-page {% if show=='malicious' %} active {% endif %}"
+                href="{{ url_for('main', page=1, show='malicious', clear_filters='True') }}">Malicious</a></li>
+            <li><a class="clear-page {% if show=='unclassified' %} active {% endif %}"
+                href="{{ url_for('main', page=1, show='unclassified', clear_filters='True') }}">Unclassified</a></li>
+            <li><a class="clear-page {% if show=='not_evaluated' %} active {% endif %}"
+                href="{{ url_for('main', page=1, show='not_evaluated', clear_filters='True') }}">Not evaluated</a></li>
+          </ul>
+        </nav>
+        User: {{user}}
+      </div>
+    </header>
+    <section id="body">
+      {% block content %}
+      {% endblock %}
+    </section>
+  </div>
+  <footer>
+    <div class="footer-wrapper">
+      <div class="sendbox-link">
+        <ul>
+          <h3>Sandboxes</h3>
+          <li>
+            <a href="https://www.joesandbox.com/" target=”_blank”><img src="./static/img/joe_sendbox.gif"
+                alt="logo"><span>Joe Sandbox</span></a>
+          </li>
+          <li>
+            <a href="https://cuckoo.cert.ee/" target=”_blank”><img src="./static/img/cuckoo_sandbox.png"
+                alt="logo"><span>Cuckoo Sandbox</span></a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+  <script src="./static/script.js"></script>
+</body>
+
+</html>

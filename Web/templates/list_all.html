@@ -1,0 +1,215 @@
+{% extends "main.html" %}
+
+{% block content %}
+
+{% if adding == 'success' %}
+  <div class="add-response success">
+    <p>URL was successfully added.</p>
+  </div>
+{% elif adding == 'fail' %}
+  <div class="add-response fail">
+    <p>URL was not added. Please check if URL is valid.</p>
+  </div>
+{% elif adding == 'in_db' %}
+<div class="add-response fail">
+  <p>URL was not added, already in database.</p>
+</div>
+{% endif %}
+<div id="list_all">
+  <!-- add filter hiden option -->
+  <div id="filters">
+    <form action="{{ url_for('main', page=1) }}" method="post" enctype="application/x-www-form-urlencoded">
+      <div class="filter-wrap">
+      <div>
+      <label class="filter-label" for="find-url">URL</label>
+      <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address" {%if filter_params["url"] %} value="{{filter_params["url"]}}" {% endif %}>
+      </div><!-- <button class="btn-style" type="submit">Search</button> -->
+
+      <div>
+      <label class="filter-label" for="find-hash">Hash</label>
+      <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash" {%if filter_params["hash"] %} value="{{filter_params["hash"]}}" {% endif %} >
+      </div>
+      <!-- <button class="btn-style" type="submit">Search</button> -->
+
+      <div>
+      <label class="filter-label" for="find-reason">Reason</label>
+      <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if filter_params["reason"] %} value="{{filter_params["reason"]}}" {% endif %}>
+      </div>
+      <!-- <button class="btn-style" type="submit">Search</button> -->
+
+      <div>
+      <label class="filter-label" for="find-note">Note</label>
+      <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note" {%if filter_params["note"] %} value="{{filter_params["note"]}}" {% endif %}>
+      </div>
+
+      <div>
+      <label class="filter-label" for="classification">Classification:</label>
+      <select name="classification" id="filter-classification">
+        <option selected value="">---select---</option>
+        <option {%if filter_params["classification"]=='malicious' %} selected {% endif %} value="malicious">Malicious</option>
+        <option {%if filter_params["classification"]=='harmless' %} selected {% endif %} value="harmless">Harmless</option>
+        <option {%if filter_params["classification"]=='unclassified' %} selected {% endif %} value="unclassified">Unclassified</option>
+        <option {%if filter_params["classification"]=='unreachable' %} selected {% endif %} value="unreachable">Unreachable</option>
+        <option {%if filter_params["classification"]=='invalid' %} selected {% endif %} value="invalid">Invalid</option>
+      </select>
+      </div>
+
+      <div>
+        <label class="filter-label" for="src">Source:</label>
+        <select name="src" id="filter-source">
+          <option selected value="">---select---</option>
+          {% for src in sources %}
+          <option {% if filter_params["src"] and filter_params["src"] | int == src[0] | int %} selected {% endif %} value={{src[0]}}>{{src[1]}}</option>
+          {% endfor %}
+        </select>
+        </div>
+
+      <div>
+      <label class="filter-label" for="status">Status:</label>
+      <select name="status" id="filter-status">
+        <option selected value="">---select---</option>
+        <option {%if filter_params["status"]=='active' %} selected {% endif %} value="active">Active</option>
+        <option {%if filter_params["status"]=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
+      </select>
+      </div>
+    </div>
+
+      <button class="btn-style filter-submit" type="submit">Search</button>
+    </form>
+
+  </div>
+  <div id="add-url-wrap">
+    <form action="{{ url_for('main', page=1) }}" method="post">
+      <label class="filter-label" for="add-url">Suspicious URL</label>
+      <input class="filter-input" type="text" id="add-url" name="add-url" placeholder="URL">
+      <button class="btn-style" type="submit">Add URL</button>
+    </form>
+  </div>
+
+  <div class="btn-line">
+    <div class="filter-btn">
+      <button class="btn-style" onclick=showSelect()>Select</button>
+    </div>
+    <div class="filter-btn">
+      <button class="btn-style" onclick="window.location.href = '{{ url_for('main', page=1, clear_filters=True) }}';">Cancel filtering</button>
+      <button class="btn-style" onclick=showFilter()>Filters</button>
+      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
+    </div>
+  </div>
+
+  <form class="select selected-urls" action="{{ url_for('bulk_edit') }}" method="post">
+    <label>Selected URLs:</label>
+    <div id="selected-urls-wrap" class="selected-urls-wrap" onload=loadList()>
+      
+    </div>
+    <button class="btn-style select" type="submit">Edit</button>
+  </form>
+
+  <div class="select select-all"> <input type="checkbox" onclick=selectAll(this) /> Select All</div>
+  <table class="list" id="url-table">
+    <thead>
+      <tr>
+        <th class="url">
+          <p>URL address</p>
+          <div class="sort">
+            <button class="up sort-btn {{ route }} {% if order == 'asc' and key == 'url' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='url', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'url' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='url', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="first_seen">
+          <p>First Seen</p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'first' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='first', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'first' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='first', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="last_seen">
+          <p>Last Seen</p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'last' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='last', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'last' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='last', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="occurences">
+          <p>Occ.</p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'occ' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='occ', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'occ' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='occ', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="classification_head">
+          <p>Classification</p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'class' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='class', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'class' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='class', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="status">
+          <p>status</p>
+        </th>
+        <th class="note"></th>
+        <th class="reason">
+          <p>Reason <span class="help-icon" onclick="toggleHelp(this)">(?)<div class="help-content" style="display: none">Classification process:<br>1. TODO...</div></span></p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'reason' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='asc', key='reason', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'reason' %}active{% endif %}"
+              onclick="location.href='{{ url_for('main', show=show, order='desc', key='reason', page=1) }}'"></button>
+          </div>
+        </th>
+        <th class="btn">Show detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for url in url_list %}
+      <tr class="table-row">
+        <td class="url">
+          <input type="checkbox" class="select" name="selected_urls[]" value="{{ url[0] }}">
+          {{ url[0] }}
+        </td>
+        <td class="first_seen">{{ url[1] }}</td>
+        <td class="last_seen">{{ url[2] }}</td>
+        <td class="occurences">{{ url[3] }}</td>
+        <td
+          class="classification {{ url[4] }}">
+          <p>{{ url[4] }}</p>
+        </td>
+        <td class="status {{url[7]}}">{{ url[7] }}</td>
+        <td class="note"> {% if url[6] != "" and url[6] %} <img src="{{ url_for("static", filename="img/note.png") }}"
+            alt="note" title="{{ url[6] }}"> {% endif %} </td> 
+        <td class="reason">{{ url[5] }}</td>
+        <td class="btn">
+          <a href="{{ url_for('edit_detail', url=url[0], show=show) }}"><button class="btn-style" onclick="">Edit</button></a>
+          <a href="{{ url_for('detail', url=url[0], show=show) }}"><button class="btn-style" onclick="">Details</button></a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="change_page">
+    <button id="prev" class="btn-style {% if page == 1 %} disabled {% endif %}" onclick="saveList(); location.href='{{ url_for('main', show=show, order=order, key=key, page=page-1) }}'">< Previous</button>
+        <p>{{page}} of {{page_count}}</p>
+    <button id="next" class="btn-style {% if page >= page_count %} disabled {% endif %}" onclick="saveList(); location.href='{{ url_for('main', show=show, order=order, key=key, page=page+1) }}'">Next ></button>
+  </div>
+</div>
+
+    {% block scripts %}
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                activeSelect();
+            });
+
+        </script>
+    {% endblock %}
+{% endblock %}

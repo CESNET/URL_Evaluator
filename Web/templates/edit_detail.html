@@ -1,0 +1,33 @@
+{% extends "main.html" %}
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats -->
+
+{% block content %}
+<div class="edit">
+    <div class="edit-wrap">
+        <h2>Edit {{ url[0] }}</h2>
+        <div class="form-wrap">
+            <form method="POST">
+                <label for="class">Classification:</label>
+                <select name="class">
+                    <option value="malicious" {% if url[5]=="malicious" %} selected {% endif %}> Malicious </option>
+                    <option value="harmless" {% if url[5]=="harmless" %} selected {% endif %}>Harmless</option>
+                    <option value="unreachable" {% if url[5]=="unreachable" %} selected {% endif %}>Unreachable</option>
+                    <option value="unclassified" {% if url[5]=="unclassified" %} selected {% endif %}>Unclassified</option>
+                    <option value="invalid" {% if url[5]=="invalid" %} selected {% endif %}>Invalid</option>
+                </select>
+                <label for="reason">Clasification reason:</label>
+                <input type="text" id="reason" name="reason" value={% if url[6]==""%}"Manual check" {% else %}"{{ url[6] }}"{% endif %}>
+                <label for="lname">Note:</label>
+                <input type="text" id="note" name="note" value="{% if url[7] %}{{ url[7] }}{% endif %}">
+                <input type="submit" class="btn-style" value="Save">
+            </form>
+            <div class="back-buttons">
+                <button class="back-btn btn-style" onclick="location.href='{{ url_for('detail', url=url[0], show=show)}}'">Detail</button>
+                <button class="back-btn btn-style" onclick="location.href='{{ url_for('main', show=show)}}'">Back</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

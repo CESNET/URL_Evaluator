@@ -1,0 +1,204 @@
+@import url(list_all.css);
+@import url(detail.css);
+@import url(edit_detail.css);
+@import url(bulk_edit.css);
+
+* {
+  font-family:Arial, Helvetica, sans-serif;
+  /* font-size: 1em; */
+  box-sizing: border-box;
+}
+
+/* h3{
+  font-size: large;
+} */
+
+a {
+  text-decoration: none;
+  color: black;
+}
+
+header, footer{
+  background-color: white;
+  width: 100%;
+}
+
+.header-wrapper, .footer-wrapper{
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+@media screen and  (max-width: 1200px) {
+  .header-wrapper{
+    padding: 0 20px;
+  }
+}
+
+body {
+  background-color: #eee;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100vh;
+}
+
+nav ul li{
+  margin: 0 10px;
+}
+
+nav ul li a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+nav ul {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+  list-style-type: none;
+}
+
+p {
+  padding: 0.5em;
+}
+
+.active {
+  font-weight: bold;
+}
+
+.btn-style {
+  display: inline-block;
+  outline: 0;
+  border: none;
+  cursor: pointer;
+  height: 32px;
+  padding: 0px 16px;
+  border-radius: 50px;
+  background-color: #22222222;
+  color: #222;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.3s ease-in-out;
+}
+
+.btn-style:hover:enabled {
+  background-color: #222222;
+  color: white;
+}
+
+.add-btn {
+  background-color: #474747a4;
+  color: white;
+  height: 50px;
+  width: 50px;
+  font-size: 30px;
+}
+
+.add-btn:hover:enabled {
+  background-color: #22222239;
+  color: #222;
+  transition: all 0.3s ease-in-out;
+}
+
+
+/* colors of classification */
+.malicious {
+  color: rgb(62, 0, 0);
+}
+
+.malicious p::before {
+  background-color: red;
+}
+
+.harmless {
+  color: rgb(0, 34, 0);
+}
+
+.harmless p::before {
+  background-color: limegreen;
+}
+
+.invalid {
+  color: rgb(47, 1, 52);
+}
+
+.invalid p::before {
+  background-color: rgb(149, 2, 193);
+}
+
+.unreachable {
+  color: rgb(102, 58, 0);
+}
+
+.unreachable p::before {
+  background-color: orange;
+}
+
+.unclassified {
+  color: rgb(0, 0, 63);
+}
+
+.unclassified p::before {
+  background-color: blue;
+}
+
+.sendbox-link {
+  padding: 15px;
+}
+
+.sendbox-link ul {
+  display: flex;
+  flex-direction: column;
+  justify-content: right
+}
+
+.sendbox-link ul li{
+  list-style-type: none;
+}
+
+.sendbox-link h3 {
+  margin: 5px 0px
+}
+
+.sendbox-link ul li a{
+  color: rgb(85, 85, 130);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  font-weight: 600;
+}
+
+.sendbox-link ul li a:hover{
+  color: rgb(91, 91, 179);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+
+.sendbox-link img{
+  width: 30px;
+  height: 30px;
+  margin-right: 20px;
+}
+
+
+.help-icon {
+  border-bottom: 1px dotted #ccc;
+  position: relative;
+}
+.help-content {
+  position: absolute;
+  top: 1em;
+  display: none;
+}
+.help-icon:hover .help-content,
+.help-content:hover {
+  display: block;
+}

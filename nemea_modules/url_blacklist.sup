@@ -1,0 +1,53 @@
+<module>
+    <name>url_filter</name>
+    <enabled>true</enabled>
+    <path>/usr/bin/nemea/unirecfilter</path>
+    <params>-f /etc/nemea/url_blacklist/urlfilter.filter</params>
+    <trapinterfaces>
+        <interface>
+            <type>UNIXSOCKET</type>
+            <direction>IN</direction>
+            <params>http_flowdata</params>
+        </interface>
+        <interface>
+            <type>UNIXSOCKET</type>
+            <direction>OUT</direction>
+            <params>http_flowdata_filtered</params>
+        </interface>
+    </trapinterfaces>
+</module>
+
+<module>
+    <name>url_blacklist_filter</name>
+    <enabled>true</enabled>
+    <path>/data/url_evaluator/url_blacklist_filter/url_blacklist_filter</path>
+    <params>-f /data/url_evaluator/url_blacklist.txt -r /var/run/libtrap/url_blacklist_filter.pid</params>
+    <trapinterfaces>
+        <interface>
+            <type>UNIXSOCKET</type>
+            <direction>IN</direction>
+            <params>http_flowdata_filtered</params>
+        </interface>
+        <interface>
+            <type>UNIXSOCKET</type>
+            <direction>OUT</direction>
+            <params>http_to_malicious_urls</params>
+        </interface>
+    </trapinterfaces>
+</module>
+
+<module>
+    <name>url_reporter</name>
+    <enabled>true</enabled>
+    <path>/data/url_evaluator/urlblacklist2idea/urlblacklist2idea.py</path>
+    <params>-n cz.cesnet.nemea.url_blacklist -c /etc/nemea/reporters-config.yml -m CHANGE_ME__MISP_URL -k CHANGE_ME__MISP_API_KEY -e CHANGE_ME__EVALUATOR_PASSWD -v 2</params>
+    <trapinterfaces>
+        <interface>
+            <type>UNIXSOCKET</type>
+            <direction>IN</direction>
+            <params>http_to_malicious_urls</params>
+        </interface>
+    </trapinterfaces>
+</module>
+
+
