@@ -13,9 +13,11 @@ from flask import Flask, jsonify, render_template, make_response, redirect, url_
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
+config_path='/data/url_evaluator/Web/web_config.yaml'
+
 class Config:
     def __init__(self) -> None:
-        with open('/data/url_evaluator/Web/web_config.yaml') as file:
+        with open(config_path) as file:
             self.config = yaml.safe_load(file)
             self.db_path = self.config["db_path"]
             self.misp_url = self.config["misp_url"]
