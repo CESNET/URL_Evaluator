@@ -3,6 +3,8 @@
 ## Description
 
 This modul recieves UniRec, checks if URL is on blacklist, if it is on blacklist, then it sends this UniRec to output. It requires file with blacklist as parameter.
+The primary function of tthis module is to monitor incoming HTTP network traffic and detect any attempts to access addresses listed on a pre-established blacklist. This module acts as a filter. 
+When a malicious address is detected, the module forwards it output, which should be input of reporting module `./nemea_modules/urlblacklist2idea/urlblacklist2idea.py`. 
 
 ### Input
 
@@ -13,10 +15,6 @@ Description of input: The module receives UniRec data related to HTTP traffic. R
 
 Number of outputs: 1\
 Description of output: Incoming UniRec data is sent to the output if the URL within the UniRec entry is found on a blacklist.
-
-### Usage
-
-url_detector [COMMON]... [OPTIONS]...
   
 ## Installation
 
@@ -32,13 +30,17 @@ url_detector [COMMON]... [OPTIONS]...
 4) Install the module. The command should be performed as root (e.g. using sudo). \
 ``` make install ```
 
-## Parameters of module [OPTIONS]
+## Usage
+
+``` url_blacklist_filter -f FILE_PATH -i IFC_SPEC ```
+
+### Parameters of module [OPTIONS]
 
 |Parameter|Description|
 |---|---|
-|-f  --file <char*>|Path to file with list of malicious URL addresses. Each line in the provided text file should contain a single URL.|
+|-f  --file <char*>|Path to blacklist file with list of malicious URL addresses. Each line in the provided text file should contain a single URL.|
 
-## Common TRAP parameters [COMMON]
+### Common TRAP parameters [COMMON]
 
 |Parameter|Description|
 |---|---|
@@ -47,5 +49,3 @@ url_detector [COMMON]... [OPTIONS]...
 |-v|Be verbose.|
 |-vv|Be more verbose.|
 |-vvv|Be even more verbose.|
-
-## 
