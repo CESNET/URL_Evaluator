@@ -1,0 +1,40 @@
+{
+    "description": "An object to record information regarding a malicious URL identified through honeypot activity.",
+    "meta-category": "Payload delivery",
+    "name": "url-honeypot-detection",
+    "required": [
+            "url",
+            "first-seen"
+    ],
+    "uuid": "053aa75b-5fdb-4f5e-8cf8-3969d46f6d19",
+    "version": 2,
+    "attributes": {
+            "url": {
+                    "description": "Full URL",
+                    "misp-attribute": "url",
+                    "ui-priority": 4
+            },
+            "first-seen": {
+                    "description": "First time this URL has been seen",
+                    "disable_correlation": true,
+                    "misp-attribute": "datetime",
+                    "ui-priority": 0
+            },
+            "hash": {
+                    "description": "Hash of downloaded content",
+                    "misp-attribute": "sha1",
+                    "ui-priority": 1
+            },
+            "malware-family": {
+                "description": "Information about malware family",
+                "misp-attribute": "text",
+                "ui-priority": 3
+            },
+            "mime-type": {
+                    "description": "MIME type of the downloaded content",
+                    "misp-attribute": "mime-type",
+                    "disable_correlation": true,
+                    "ui-priority": 2
+            }
+    }
+}
