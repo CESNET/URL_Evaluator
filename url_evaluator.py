@@ -2,6 +2,7 @@
 import os
 import re
 import signal
+import regex
 import sys
 import json
 import time
@@ -11,6 +12,7 @@ import hashlib
 import magic
 import requests
 import logging
+import datetime as dt
 
 import yaml
 import virustotal_python
@@ -36,7 +38,6 @@ vt_count_day = 0
 
 # logger
 logger = None
-
 
 # variables for signal handling
 def terminate_me(signum, frame):
@@ -218,16 +219,94 @@ def download_content(url: str, config: Config):
 
     file_type = ""
     if "content-type" in response.headers.keys():
-        file_type = response.headers['content-type']
+        file_type = response.headers['content-type'].split(";")[0]
     else:
         try:
             file_type = magic.from_buffer(response.content, mime=True)
         except Exception as e:
             logger.info(f"Couldn't determine file type. Error: {e}")
 
+
+    # URL regex
+    command_format = r"(.*\b(curl|wget)\b.*https?:\/\/[^\s]+.*)"
+    url_format = "(?<!(--referer|-e)(\s|\s\'|\s\"))(https?:\/\/.*?)(?=\s|;|\\||\\\\|\"|\')"
+
+    if "x-sh" in file_type or "sh" in file_type or "bash" in file_type or "shell" in file_type or "plain" in file_type:
+        try:
+            content = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+            content = ""
+        commands_reg = re.findall(command_format, content) 
+        for command in commands_reg:
+            command = command[0].strip()
+            urls_reg = regex.findall(url_format, command)
+            for url_found in urls_reg:
+                add_new(url_found[2].strip(), command, url, config)
+
+ 
+
     hash = hashlib.sha1(response.content).hexdigest()
 
     check_hash(url, hash, file_type, downloaded_size, config)
+
+def is_active(url: str):
+    """
+    Check if URL is active.
+    Parameters:
+        url     : URL to check
+    """
+    try:
+        response = requests.head(url, timeout=20)
+        if response.status_code >= 400:
+            return False
+        else:
+            return True
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        return False
+    except requests.exceptions.ConnectionError:
+        return False
+
+def add_new(url: str, command: str, src_url: str, config: Config):
+    """
+    If new URL was found in a shell script add the new URL to database.
+    Parameters:
+        url     : URL to add
+        command : command that contains URL
+        config  : Config object
+    """
+    
+    logger.info(f"New URL ({url}) found in a script on {src_url}")
+    
+    # check if URL is in database
+    sql_select = f"SELECT url FROM urls WHERE url='{url}'"
+    db_connection(config.db_path)
+    cursor_db.execute(sql_select)
+    url_in_db = cursor_db.fetchall()
+    conn_db.close()
+    if is_active(url):
+        status = "active"
+    else:
+        status = "inactive"
+
+    # time of detection
+    first_seen = datetime.now(dt.timezone.utc).date()
+
+    command_id = hashlib.md5(command.encode()).hexdigest()
+
+    sql_insert = "INSERT OR IGNORE INTO urls (url, first_seen, url_occurrences, reported, evaluated, status, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    db_connection(config.db_path)
+    # insert new URL to database
+    cursor_db.execute(sql_insert, (url, first_seen, 1, "no", "no", status, first_seen))
+    cursor_db.execute("UPDATE urls SET url_occurrences = url_occurrences + 1, last_seen = ?  WHERE url = ?", (first_seen, url))
+    cursor_db.execute("INSERT OR IGNORE INTO url_source (url, src_url) VALUES (?, ?)", (url, src_url))
+    
+    # add session to database
+    cursor_db.execute("INSERT OR IGNORE INTO sessions (session_hash, session) VALUES (?, ?)", (command_id, command))
+    cursor_db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, command_id))
+
+    # set number of occurrences
+    conn_db.commit()
+    conn_db.close()
 
 
 def add_to_database(url: str, classification: str, classification_reason: str, vt_stats_json, hash: str, content_size: int, file_type: str, threat_label: str, db_path: str):
@@ -240,7 +319,7 @@ def add_to_database(url: str, classification: str, classification_reason: str, v
         vt_stats_json           : JSON with VirusTotal statistics
         hash                    : hash of downloaded content
     """
-    logger.info(f'Classified as "{classification}" (reason: "{classification_reason}")')
+    logger.info(f'URL {url} was classified as "{classification}" (reason: "{classification_reason}")')
     sql_insert = f"""UPDATE urls SET
             hash=?,
             classification=?,
@@ -327,13 +406,9 @@ def check_urls(url_list: list, config: Config, bl_list: list):
 
             # check URL in VirusTotal
             try:
-                # response = vtotal.request(
-                #     "urls", data={"url": url}, method="POST")
-                # print(response)
                 url_id = urlsafe_b64encode(
                     url.encode()).decode().strip("=")
                 report = vtotal.request(f"urls/{url_id}")
-                # print(report)
             except virustotal_python.VirustotalError as err:
                 logger.info(
                     f"Failed to send URL: {url} for analysis and get the report: {err}")
@@ -367,9 +442,9 @@ def parse_args():
     Parse arguments from command line.
     """
     parser = argparse.ArgumentParser(
-                    prog='URL Analyzer',
+                    prog='url_evaluator.py',    
                     description='Program checks given URLs, analyze them and saves informations to database')
-    parser.add_argument('--config', '-c', action='store', default="",
+    parser.add_argument('--config', '-c', action='store', default="", required=True,
                     help='Path to a file with URLs')
     args = parser.parse_args()
   
@@ -391,12 +466,18 @@ def main():
     try:
         config = Config(args.config)
     except (FileNotFoundError, yaml.YAMLError):
+        print("Error while loading configuration file", file=sys.stderr)
         exit(1)
 
     # Set logger
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
-    logging.basicConfig(filename=config.log_file, filemode="a", format=LOGFORMAT, level=logging.INFO)
+    if config.log_file:
+        logging.basicConfig(filename=config.log_file, filemode="a", format=LOGFORMAT, level=logging.INFO)
+    else:
+        logging.basicConfig(format=LOGFORMAT, level=logging.INFO)
+        print("No log file specified, logging to stdout")
     logger = logging.getLogger("URL Evaluator")
+    logger.info("Starting URL Evaluator")
 
     if not config.virustotal_key:
         logger.fatal("VirusTotal API key not set in configuration.")
@@ -413,7 +494,7 @@ def main():
     for (signum, handler) in signals.items():
         signal.signal(signum, handler)
 
-
+    logger.debug("Starting main loop")
     while running_flag:
         if last_date != datetime.now().date():
             last_date = datetime.now().date()
