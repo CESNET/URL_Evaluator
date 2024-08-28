@@ -276,13 +276,7 @@ def add_new(url: str, command: str, src_url: str, config: Config):
     """
     
     logger.info(f"New URL ({url}) found in a script on {src_url}")
-    
-    # check if URL is in database
-    sql_select = f"SELECT url FROM urls WHERE url='{url}'"
-    db_connection(config.db_path)
-    cursor_db.execute(sql_select)
-    url_in_db = cursor_db.fetchall()
-    conn_db.close()
+     
     if is_active(url):
         status = "active"
     else:
@@ -293,10 +287,11 @@ def add_new(url: str, command: str, src_url: str, config: Config):
 
     command_id = hashlib.md5(command.encode()).hexdigest()
 
-    sql_insert = "INSERT OR IGNORE INTO urls (url, first_seen, url_occurrences, reported, evaluated, status, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
     db_connection(config.db_path)
     # insert new URL to database
-    cursor_db.execute(sql_insert, (url, first_seen, 1, "no", "no", status, first_seen))
+    cursor_db.execute("PRAGMA foreign_keys = ON")
+    sql_insert = "INSERT OR IGNORE INTO urls (url, first_seen, url_occurrences, reported, evaluated, status, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    cursor_db.execute(sql_insert, (url, first_seen, 0, "no", "no", status, first_seen))
     cursor_db.execute("UPDATE urls SET url_occurrences = url_occurrences + 1, last_seen = ?  WHERE url = ?", (first_seen, url))
     cursor_db.execute("INSERT OR IGNORE INTO url_source (url, src_url) VALUES (?, ?)", (url, src_url))
     
@@ -344,6 +339,20 @@ def add_to_database(url: str, classification: str, classification_reason: str, v
             WHERE url=?;"""
         cursor_db.execute(sql_insert, (content_size, url))
         conn_db.commit()
+
+    # check if URL is active
+    if is_active(url):
+        status = "active"
+        last_active = datetime.now(dt.timezone.utc).date()
+    else:
+        status = "inactive"
+        last_active = cursor_db.execute("SELECT last_active FROM urls WHERE url = ?", (url,)).fetchone()[0]
+        if not last_active:
+            last_active = datetime.now(dt.timezone.utc).date()
+        cursor_db.execute("UPDATE urls SET status = ? WHERE url = ?", (status, url))
+    cursor_db.execute("UPDATE urls SET status = ?, last_active = ? WHERE url = ?", (status, last_active, url))
+
+    conn_db.commit()
 
     conn_db.close()
     
