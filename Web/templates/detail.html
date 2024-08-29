@@ -68,6 +68,7 @@
                     <td>Source</td>
                     <td>{{ url.src }}</td>
                 </tr>
+                
                 {% if url.hash != "" %}
                 <tr>
                     <td>Hash</td>
@@ -140,6 +141,34 @@
                             {{ url.ip }}
                         </a>
                         <!-- <p></p> -->
+                    </td>
+                </tr>
+                {% endif %}
+                {% if url.src_urls %}
+                    <tr>
+                        <td>Found in content of</td>
+                        <td class="url-list-wrap">
+                            <div class="list-urls">
+                            {% for src_url in url.src_urls %}
+                                <p>
+                                <a class="src-url" href="{{ url_for('detail', url=src_url[0], show=show) }}" target="_blank" title="URL Evaluator details">{{ src_url[0] }}</a>
+                                </p>
+                            {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+                {% if url.contained_urls %}
+                <tr>
+                    <td>URLs in content</td>
+                    <td class="url-list-wrap">
+                        <div class="list-urls">
+                        {% for contained_url in url.contained_urls %}
+                            <p>
+                            <a class="src-url" href="{{ url_for('detail', url=contained_url[0], show=show) }}" target="_blank" title="URL Evaluator details">{{ contained_url[0] }}</a>
+                            </p>
+                        {% endfor %}
+                        </div>
                     </td>
                 </tr>
                 {% endif %}

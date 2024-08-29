@@ -119,7 +119,7 @@
 }
 
 
-.detail .sessions {
+.detail .sessions{
     background-color: #f8f8f8;
     border: 1px solid #ddd;
     border-radius: 10px;
@@ -198,4 +198,23 @@
     height: 20px;
     border-radius: 20px;
     margin: 10px;
+}
+
+.detail a.src-url{
+    text-decoration: underline;
+    color: grey;
+}
+
+.detail .url-list-wrap {
+    padding-left: 20px !important;
+}
+
+.detail .list-urls {
+    background-color: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 100px;
+    overflow: scroll;
+    /* margin: 10px; */
 }

@@ -17,7 +17,7 @@ config_path='/data/url_evaluator/Web/web_config.yaml'
 
 class Config:
     def __init__(self) -> None:
-        with open(config_path) as file:
+        with open('./web_config.yaml') as file:
             self.config = yaml.safe_load(file)
             self.db_path = self.config["db_path"]
             self.misp_url = self.config["misp_url"]
@@ -44,6 +44,8 @@ class URLDetail:
         self.last_active = ""
         self.last_edit = ""
         self.ip = ""
+        self.src_urls = []
+        self.contained_urls = []
 
 
 
@@ -388,6 +390,18 @@ def detail():
     sources = list_from_db(select_sources)
     url_detail = parse_sources(url_detail, sources)
 
+    # get source urls
+    select_src_urls = f"SELECT src_url FROM url_source WHERE url = '{url_detail.url}' AND src_url IS NOT NULL"
+    url_detail.src_urls = list_from_db(select_src_urls)
+    if url_detail.src_urls and not url_detail.src:
+        url_detail.src = "found in content of another URL"
+
+    # get contained urls
+    select_contained_urls = f"SELECT url FROM url_source WHERE src_url = '{url}'"
+    url_detail.contained_urls = list_from_db(select_contained_urls)
+
+
+    # get sessions 
     select_sessions = f"SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = '{url}'"
     sessions = list_from_db(select_sessions)
 
