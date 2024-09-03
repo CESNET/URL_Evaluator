@@ -45,9 +45,12 @@ conn = sqlite3.connect(args.database)
 cursor = conn.cursor()
 today = date.today()
 day = today.strftime("%Y-%m-%d")
-select = f"SELECT url FROM urls WHERE classification='malicious' AND last_seen='{day}'"
+select = f"SELECT url FROM urls WHERE classification='malicious' AND status='active'"
 urls = conn.execute(select).fetchall()
 logger.info(f"Found {len(urls)} malicious URLs")
+
+if len(urls) == 0:
+    sys.exit(0)
 
 # Load blacklist
 downloaded_bl = requests.get("https://urlhaus.abuse.ch/downloads/text/")
@@ -66,9 +69,12 @@ headers = {
     "Content-Type": "application/json"
 }
 
+cnt = 0
+cnt_submissions = 0
 for url in urls:
     if url[0] in blacklist:
         continue
+    cnt += 1
     jsonData = {
         'token': args.key,
         'anonymous': '0',
@@ -79,4 +85,8 @@ for url in urls:
     }
     r = requests.post(urlhaus, json=jsonData, timeout=15, headers=headers)
     logger.info(f"URL '{url[0]}' was sent to URLhaus. Response code: {r.status_code}")
+    if r.status_code == 200:
+        cnt_submissions += 1
     logger.debug(f"Response: {r.content}")
+
+logger.info(f"Sent {cnt_submissions} URLs to URLhaus out of {cnt} URLs")
