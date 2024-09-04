@@ -18,6 +18,17 @@ create table sources
 create unique index sources_source_uindex
     on sources (source);
 
+create table url_source
+(
+    id      INTEGER
+        primary key autoincrement,
+    url     TEXT,
+    source  TEXT default -1,
+    src_url TEXT default '',
+    constraint unq
+        unique (url, source, src_url)
+);
+
 create table urls
 (
     url                   TEXT
@@ -57,23 +68,4 @@ create table url_session
 
 create unique index idx_url_session_unique
     on url_session (url, session);
-
-create table url_source
-(
-    id      INTEGER
-        constraint url_source_pk
-            primary key autoincrement,
-    url     TEXT
-        references urls
-            on delete cascade,
-    source  INTEGER
-        references sources
-            on delete cascade,
-    src_url TEXT
-        references urls
-            on delete cascade
-);
-
-create unique index unique_url_source
-    on url_source (url, source, src_url);
 
