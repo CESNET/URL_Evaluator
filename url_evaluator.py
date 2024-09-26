@@ -204,6 +204,14 @@ def download_content(url: str, config: Config):
         if header.status_code >= 400:
             add_to_database(url, "unreachable", f"Return code {header.status_code}", "", "", None, "", "", db_path=config.db_path)
             return
+        
+        if "content-length" in header.headers.keys():
+            content_size = int(header.headers['content-length'])
+            content_size_mb = content_size / (1024 * 1024)
+            logger.debug(f"Content size: {content_size_mb:.2f} MB")
+            if content_size_mb > 100:
+                add_to_database(url, "unclassified", "Content too big (>100MB)", "", "", content_size, "", "", db_path=config.db_path)
+                return
 
         response = requests.get(url, timeout=20, stream=True)
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
