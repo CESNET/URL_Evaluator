@@ -1,7 +1,8 @@
 # Path to file with malicious URLs
-# url_file_path: "./url"
 db_path: "./url.sqlite"
 bl_path: "./Blacklists/blacklist.txt"
+bl_update_time: 15 # minutes
 virustotal_key: ""
 limits:
   malicious: 0.2
+log_file: "" # if empty, log will be printed to stdout
