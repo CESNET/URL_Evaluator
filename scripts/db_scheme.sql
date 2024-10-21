@@ -1,4 +1,3 @@
--- we don't know how to generate root <with-no-name> (class Root) :(
 create table sessions
 (
     session_hash TEXT
@@ -51,7 +50,7 @@ create table urls
     last_active           date,
     status_changed        TEXT default 'no',
     last_edit             TEXT default "",
-    check (classification IN ('malicious', 'harmless', 'unreachable', 'unclassified', 'invalid')),
+    check (classification IN ('malicious', 'harmless', 'unreachable', 'unclassified', 'invalid', 'miner')),
     check (evaluated IN ('yes', 'no')),
     check (reported IN ('yes', 'no'))
 );

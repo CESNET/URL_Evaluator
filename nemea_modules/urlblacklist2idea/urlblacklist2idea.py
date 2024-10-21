@@ -43,10 +43,14 @@ def create_msg(rec, details):
     else:
         msg = msg + f" but it seems it failed to download a content (response code {rec.HTTP_RESPONSE_STATUS_CODE})."
 
-    if details.get("threat_label"):
-        msg = msg + f" This URL is known to host a malware ({details.get('threat_label')})."
-    else:
-        msg = msg + " This URL is known to host a malware."
+    classification = details.get("classification", None)
+    if classification == "malicious":
+        if details.get("threat_label"):
+            msg = msg + f" This URL is known to host a malware ({details.get('threat_label')})."
+        else:
+            msg = msg + " This URL is known to host a malware."
+    elif classification == "miner":
+        msg = msg + " This URL is known to host a crypto miner."
     
     if rec.HTTP_RESPONSE_STATUS_CODE == 0:
         msg = msg + " If the connection was successful and content was executed, the host may now be infected."
@@ -136,6 +140,13 @@ def get_misp_info(url, misp_url, misp_key, details):
             details["mime_type"] = attr.get("value")
         elif obj_relation == "threat-label":
             details["threat_label"] = attr.get("value")
+        elif obj_relation == "url":
+            for tag in attr.get("Tag"):
+                if tag.get("name") == 'rsit:malicious-code="malware-distribution"':
+                    details["classification"] = "malicious"
+                elif tag.get("name") == 'sentinel-threattype:CryptoMining':
+                    details["classification"] = "miner"
+            
     logger.info("MISP data found")
 
 

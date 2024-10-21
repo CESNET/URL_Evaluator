@@ -36,7 +36,7 @@ cursor = conn.cursor()
 logger.debug("Connected to database")
 
 # get not reported urls
-cursor.execute("SELECT url, hash, first_seen, file_mime_type, threat_label, status FROM urls WHERE reported = 'no' and classification = 'malicious'")
+cursor.execute("SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE reported = 'no' and (classification = 'malicious' or classification == 'miner')")
 rows = cursor.fetchall()
 logger.info(f"Found {len(rows)} new malicious URLs")
 
@@ -84,13 +84,17 @@ for row in rows:
     file_mime_type = row[3]
     threat_label = row[4]
     status = row[5]
+    classification = row[6]
 
     new_object = MISPObject("url-honeypot-discovery", misp_objects_path_custom="/data/url_evaluator/misp_objects/")
     if status == "active":
         url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=True, Attribute = {"type": "url", "value": url})
     else:
         url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=False, Attribute = {"type": "url", "value": url, "to_ids":False})
-    url_attr.add_tag('rsit:malicious-code="malware-distribution"')
+    if classification == "malicious":
+        url_attr.add_tag('rsit:malicious-code="malware-distribution"')
+    elif classification == "miner":
+        url_attr.add_tag('sentinel-threattype:CryptoMining')
     new_object.add_attribute(object_relation="first-seen", simple_value=first_seen, Attribute = {"type": "datetime", "value": first_seen})
     if hash:
         hash_attr = new_object.add_attribute(object_relation="hash", simple_value=hash, Attribute = {"type": "sha1", "value": hash})

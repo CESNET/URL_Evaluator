@@ -14,6 +14,7 @@
                     <option value="unreachable" {% if url[5]=="unreachable" %} selected {% endif %}>Unreachable</option>
                     <option value="unclassified" {% if url[5]=="unclassified" %} selected {% endif %}>Unclassified</option>
                     <option value="invalid" {% if url[5]=="invalid" %} selected {% endif %}>Invalid</option>
+                    <option value="miner" {% if url[5]=="miner" %} selected {% endif %}>Miner</option>
                 </select>
                 <label for="reason">Clasification reason:</label>
                 <input type="text" id="reason" name="reason" value={% if url[6]==""%}"Manual check" {% else %}"{{ url[6] }}"{% endif %}>

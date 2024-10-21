@@ -148,6 +148,14 @@ p {
   background-color: blue;
 }
 
+.miner {
+  color: rgb(100, 7, 86);
+}
+
+.miner p::before {
+  background-color: rgb(222, 99, 202);
+}
+
 .sendbox-link {
   padding: 15px;
 }
