@@ -29,12 +29,12 @@ cursor_db = None
 # Variables for blacklist
 bl_last_updated = None
 
-# Variables for VirusTotal API limit
-vt_limit_minute = 4
-vt_count_minute = 0
-vt_start = None
-vt_limit_day = 500
-vt_count_day = 0
+# # Variables for VirusTotal API limit
+vt_min_quota = 4
+vt_cnt = 0
+vt_time_minute = None
+vt_quota_exceeded = False
+vt_time = None
 
 # logger
 logger = None
@@ -106,33 +106,33 @@ def is_in_database(url: str) -> bool:
     else:
         date = datetime.date(datetime.utcnow())
         update_sql = f"UPDATE urls SET last_seen=?, url_occurrences=? WHERE url=?;"
-        cursor_db.execute(update_sql, (date, url_in_db[0][0]+1, url))
-        cursor_db.fetchall()
+
+        updated = False
+        while not updated:
+            try:
+                cursor_db.execute(update_sql, (date, url_in_db[0][0]+1, url))
+                conn_db.commit()
+                updated = True
+            except sqlite3.Error as e:
+                logger.info(f"Error while updating URL occurrences: {e}")
+                conn_db.rollback()
+                time.sleep(1)
         return True
-
-
-def check_vt_limit():
-    """
-    Check VirusTotal API limit.
-    """
-    global vt_count_minute
-    global vt_start
-    global vt_count_day
-
-    if time.time() - vt_start < 60:
-        if vt_count_minute >= vt_limit_minute:
-            time.sleep(60 - (time.time() - vt_start))
-            vt_start = time.time()
-            vt_count_minute = 0
-    else:
-        vt_count_minute = 0
-        vt_start = time.time()
-
-    vt_count_minute += 1
-    vt_count_day += 1
 
 @lru_cache()
 def vt_hash_check(hash: str, vt_key: str):
+    global vt_cnt
+    global vt_time_minute
+    global vt_min_quota
+
+    if vt_cnt >= vt_min_quota:
+            if vt_time_minute + timedelta(minutes=1) < datetime.now():
+                sleep_time = 60 - (datetime.now() - vt_time_minute).seconds
+                time.sleep(sleep_time)
+            
+            vt_cnt = 0
+            vt_time_minute = datetime.now()
+
     vt_url = "https://www.virustotal.com/api/v3/files"
     vt_request = f'{vt_url}/{hash}'
     params = {"apikey": vt_key,
@@ -142,6 +142,23 @@ def vt_hash_check(hash: str, vt_key: str):
     response = requests.get(vt_request, headers=headers, params=params)
     return response.json()
 
+
+def evaluate_later(url: str, db_path: str):
+    # set URL to evaluate later after VirusTotal API limit is reset
+    logger.info(f"Evaluating URL {url} later, after VirusTotal API limit is reset")
+    db_connection(db_path)
+    updated = False
+    while not updated:
+        try:
+            cursor_db.execute("PRAGMA foreign_keys = ON")
+            cursor_db.execute("UPDATE urls SET eval_later='yes' WHERE url=?", (url, ))
+            conn_db.commit()
+            updated = True
+        except sqlite3.Error as e:
+            logger.info(f"Error while updating URL to evaluate later: {e}")
+            conn_db.rollback()
+            time.sleep(1)
+    conn_db.close()
 
 def check_hash(url: str, hash: str, file_type: str, content_size: str, config: Config):
     """
@@ -153,42 +170,47 @@ def check_hash(url: str, hash: str, file_type: str, content_size: str, config: C
         config  : Config object
     """
 
-    # check_vt_limit()
-
     # check hash in VirusTotal
     logger.debug("Checking hash in VirusTotal")
     vt_stats_json = ""
     class_reason = ""
     threat_label = ""
     
-    response_json = vt_hash_check(hash, config.virustotal_key)
+    if not vt_quota_exceeded:
+        response_json = vt_hash_check(hash, config.virustotal_key)
 
-    if response_json.get("data", {}).get("attributes", {}):
-        attributes = response_json.get("data", {}).get("attributes", {})
-        stats = attributes.get("last_analysis_stats", {})
-        threat_label = attributes.get("popular_threat_classification", {}).get("suggested_threat_label", {})
-        if stats["malicious"] > config.limits["malicious"]:
-            classification = "malicious"
-            class_reason = "Hash control"
-        elif (stats["malicious"] == 0 and stats["suspicious"] == 0 and stats["undetected"] == 0 and stats["harmless"] > 0):
-            classification = "harmless"
-        else: 
-            classification = "unclassified"
-        vt_stats_json = json.dumps(stats)
-    else:
-        # check hash in MalwareBazaar
-        logger.debug("Checking hash in MalwareBazaar")
-        response = requests.post("https://mb-api.abuse.ch/api/v1/", data={"query": "get_info", "hash": hash})
-        response_json = response.json()
-        if response_json["query_status"] == "ok":
-            # add_to_database(url, "malicious", "Hash control", "", hash)
-            classification = "malicious"
-            class_reason = "Hash control"
+        if response_json.get("data", {}).get("attributes", {}):
+            attributes = response_json.get("data", {}).get("attributes", {})
+            stats = attributes.get("last_analysis_stats", {})
+            threat_label = attributes.get("popular_threat_classification", {}).get("suggested_threat_label", {})
+            if stats["malicious"] > config.limits["malicious"]:
+                classification = "malicious"
+                class_reason = "Hash control"
+            elif (stats["malicious"] == 0 and stats["suspicious"] == 0 and stats["undetected"] == 0 and stats["harmless"] > 0):
+                classification = "harmless"
+            else: 
+                classification = "unclassified"
+            vt_stats_json = json.dumps(stats)
+            add_to_database(url, classification, class_reason, vt_stats_json, hash, content_size, file_type, threat_label, db_path=config.db_path)
             return
-        else:
-            classification = "unclassified"
+    
+    # check hash in MalwareBazaar
+    logger.debug("Checking hash in MalwareBazaar")
+    response = requests.post("https://mb-api.abuse.ch/api/v1/", data={"query": "get_info", "hash": hash})
+    response_json = response.json()
+    if response_json["query_status"] == "ok":
+        # add_to_database(url, "malicious", "Hash control", "", hash)
+        classification = "malicious"
+        class_reason = "Hash control"
+        return
+    else:
+        classification = "unclassified"
 
-    add_to_database(url, classification, class_reason, vt_stats_json, hash, content_size, file_type, threat_label, db_path=config.db_path)
+    if vt_quota_exceeded and classification == "unclassified":
+        # url will be evaluated later after VirusTotal API limit is reset
+        evaluate_later(url, config.db_path)
+    else:
+        add_to_database(url, classification, class_reason, vt_stats_json, hash, content_size, file_type, threat_label, db_path=config.db_path)
 
 
 def download_content(url: str, config: Config):
@@ -208,7 +230,6 @@ def download_content(url: str, config: Config):
         if "content-length" in header.headers.keys():
             content_size = int(header.headers['content-length'])
             content_size_mb = content_size / (1024 * 1024)
-            logger.debug(f"Content size: {content_size_mb:.2f} MB")
             if content_size_mb > 100:
                 add_to_database(url, "unclassified", "Content too big (>100MB)", "", "", content_size, "", "", db_path=config.db_path)
                 return
@@ -297,18 +318,26 @@ def add_new(url: str, command: str, src_url: str, config: Config):
 
     db_connection(config.db_path)
     # insert new URL to database
-    cursor_db.execute("PRAGMA foreign_keys = ON")
-    sql_insert = "INSERT OR IGNORE INTO urls (url, first_seen, url_occurrences, reported, evaluated, status, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    cursor_db.execute(sql_insert, (url, first_seen, 0, "no", "no", status, first_seen))
-    cursor_db.execute("UPDATE urls SET url_occurrences = url_occurrences + 1, last_seen = ?  WHERE url = ?", (first_seen, url))
-    cursor_db.execute("INSERT OR IGNORE INTO url_source (url, src_url) VALUES (?, ?)", (url, src_url))
-    
-    # add session to database
-    cursor_db.execute("INSERT OR IGNORE INTO sessions (session_hash, session) VALUES (?, ?)", (command_id, command))
-    cursor_db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, command_id))
+    inserted = False
+    while not inserted:
+        try:
+            cursor_db.execute("PRAGMA foreign_keys = ON")
+            sql_insert = "INSERT OR IGNORE INTO urls (url, first_seen, url_occurrences, reported, evaluated, status, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            cursor_db.execute(sql_insert, (url, first_seen, 0, "no", "no", status, first_seen))
+            cursor_db.execute("UPDATE urls SET url_occurrences = url_occurrences + 1, last_seen = ?  WHERE url = ?", (first_seen, url))
+            cursor_db.execute("INSERT OR IGNORE INTO url_source (url, src_url) VALUES (?, ?)", (url, src_url))
+            
+            # add session to database
+            cursor_db.execute("INSERT OR IGNORE INTO sessions (session_hash, session) VALUES (?, ?)", (command_id, command))
+            cursor_db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, command_id))
 
-    # set number of occurrences
-    conn_db.commit()
+            # set number of occurrences
+            conn_db.commit()
+            inserted = True
+        except sqlite3.Error as e:
+            logger.info(f"Error while adding new URL to database: {e}")
+            conn_db.rollback()
+            time.sleep(1)
     conn_db.close()
 
 
@@ -331,36 +360,51 @@ def add_to_database(url: str, classification: str, classification_reason: str, v
             vt_stats=?,
             evaluated=?,
             file_mime_type=?,
-            threat_label=?
+            threat_label=?,
+            eval_later=NULL
             WHERE url=?;"""
 
     if not isinstance(threat_label, str):
         threat_label = ""
 
     db_connection(db_path)
-    cursor_db.execute(sql_insert, (hash, classification, classification_reason, "no", vt_stats_json, "yes", file_type, threat_label, url))
-    conn_db.commit()
+    update = False
+    while not update:
+        try:
+            cursor_db.execute(sql_insert, (hash, classification, classification_reason, "no", vt_stats_json, "yes", file_type, threat_label, url))
+            if content_size:
+                sql_insert = f"""UPDATE urls SET
+                                content_size=?
+                                WHERE url=?;"""
+                cursor_db.execute(sql_insert, (content_size, url))
+            conn_db.commit()
+            update = True
+        except sqlite3.Error as e:
+            logger.info(f"Error while updating URL in database: {e}")
+            conn_db.rollback()
+            time.sleep(1)
 
-    if content_size:
-        sql_insert = f"""UPDATE urls SET
-            content_size=?
-            WHERE url=?;"""
-        cursor_db.execute(sql_insert, (content_size, url))
-        conn_db.commit()
+    updated = False
+    while not updated:
+        try:
+            # check if URL is active
+            if is_active(url):
+                status = "active"
+                last_active = datetime.now(dt.timezone.utc).date()
+            else:
+                status = "inactive"
+                last_active = cursor_db.execute("SELECT last_active FROM urls WHERE url = ?", (url,)).fetchone()[0]
+                if not last_active:
+                    last_active = datetime.now(dt.timezone.utc).date()
+                cursor_db.execute("UPDATE urls SET status = ? WHERE url = ?", (status, url))
+            cursor_db.execute("UPDATE urls SET status = ?, last_active = ? WHERE url = ?", (status, last_active, url))
 
-    # check if URL is active
-    if is_active(url):
-        status = "active"
-        last_active = datetime.now(dt.timezone.utc).date()
-    else:
-        status = "inactive"
-        last_active = cursor_db.execute("SELECT last_active FROM urls WHERE url = ?", (url,)).fetchone()[0]
-        if not last_active:
-            last_active = datetime.now(dt.timezone.utc).date()
-        cursor_db.execute("UPDATE urls SET status = ? WHERE url = ?", (status, url))
-    cursor_db.execute("UPDATE urls SET status = ?, last_active = ? WHERE url = ?", (status, last_active, url))
-
-    conn_db.commit()
+            conn_db.commit()
+            updated = True
+        except sqlite3.Error as e:
+            logger.info(f"Error while updating URL status in database: {e}")
+            conn_db.rollback()
+            time.sleep(1)
 
     conn_db.close()
     
@@ -396,32 +440,41 @@ def check_urls(url_list: list, config: Config, bl_list: list):
     """
 
     global running_flag
-    global vt_start
-    vt_start = time.time()
+    global vt_quota_exceeded
+    global vt_time
+    global vt_time_minute
+    global vt_min_quota
+    global vt_cnt
 
-    with virustotal_python.Virustotal(config.virustotal_key) as vtotal:
-        for url in url_list:
-            if not running_flag:
-                break
-            logger.info(f"URL: {url}")
+    for url in url_list:
+        if not running_flag:
+            break
+        logger.info(f"URL: {url}")
 
-            # check if URL is valid
-            if not is_valid_url(url):
-                add_to_database(url, "invalid", "Invalid URL", "", "", None, "", "", db_path=config.db_path)
-                continue
+        # check if URL is valid
+        if not is_valid_url(url):
+            add_to_database(url, "invalid", "Invalid URL", "", "", None, "", "", db_path=config.db_path)
+            continue
 
-            # check in URLhaus blacklist
-            if url in bl_list:
-                add_to_database(url, "malicious", "blacklist check", "", "", None, "", "", db_path=config.db_path)
-                continue
+        # check in URLhaus blacklist
+        if url in bl_list:
+            add_to_database(url, "malicious", "blacklist check", "", "", None, "", "", db_path=config.db_path)
+            continue
+        
+        if vt_quota_exceeded:
+            download_content(url, config)
+            continue
+
+        if vt_cnt >= vt_min_quota:
+            if vt_time_minute + timedelta(minutes=1) < datetime.now():
+                sleep_time = 60 - (datetime.now() - vt_time_minute).seconds
+                time.sleep(sleep_time)
             
-            # if VT limit for a day is reached, skip 
-            if vt_count_day >= vt_limit_day:
-               continue
+            vt_cnt = 0
+            vt_time_minute = datetime.now()
 
-            check_vt_limit()
-
-            # check URL in VirusTotal
+        # check URL in VirusTotal
+        with virustotal_python.Virustotal(config.virustotal_key) as vtotal:
             try:
                 url_id = urlsafe_b64encode(
                     url.encode()).decode().strip("=")
@@ -429,29 +482,33 @@ def check_urls(url_list: list, config: Config, bl_list: list):
             except virustotal_python.VirustotalError as err:
                 logger.info(
                     f"Failed to send URL: {url} for analysis and get the report: {err}")
+                if "429" in str(err):
+                    logger.info("VirusTotal API limit for the day exceeded")
+                    vt_quota_exceeded = True
+                    vt_time = datetime.now()
                 download_content(url, config)
                 continue
 
-            # get responses from VirusTotal report
-            report_attributes = report.data["attributes"]
-            report_stats = report_attributes["last_analysis_stats"]
+        # get responses from VirusTotal report
+        report_attributes = report.data["attributes"]
+        report_stats = report_attributes["last_analysis_stats"]
 
-            # get threshold values from config
-            malicious_lim = config.limits["malicious"]
+        # get threshold values from config
+        malicious_lim = config.limits["malicious"]
 
-            # get ratio of malicious detections
-            stats_count = sum(report_stats.values())
-            if stats_count == 0:
-                malicious_ratio = 0
-            else:
-                malicious_ratio = report_stats["malicious"] / stats_count
+        # get ratio of malicious detections
+        stats_count = sum(report_stats.values())
+        if stats_count == 0:
+            malicious_ratio = 0
+        else:
+            malicious_ratio = report_stats["malicious"] / stats_count
 
-            # check thresholds
-            if (malicious_ratio > malicious_lim):
-                vt_stats_json = json.dumps(report_stats)
-                add_to_database(url, "malicious", "VirusTotal URL check", vt_stats_json, "", None, "", "", db_path=config.db_path)
-            else:
-                download_content(url, config)
+        # check thresholds
+        if (malicious_ratio > malicious_lim):
+            vt_stats_json = json.dumps(report_stats)
+            add_to_database(url, "malicious", "VirusTotal URL check", vt_stats_json, "", None, "", "", db_path=config.db_path)
+        else:
+            download_content(url, config)
            
 
 def parse_args():
@@ -472,9 +529,11 @@ def main():
     """
     Connect to database, load URLs from file and call function to check them.
     """
-    
+    global vt_time_minute
+    global vt_quota_exceeded
+    global vt_time
     global bl_last_updated
-    global vt_count_day
+    # global vt_count_day
     global running_flag
     global signals
     global logger
@@ -505,22 +564,20 @@ def main():
         sys.exit(1)
 
 
-    last_date = datetime.now().date()
+    # last_date = datetime.now().date()
 
     # Setup signal handlers
     for (signum, handler) in signals.items():
         signal.signal(signum, handler)
 
+    # set vt timer for minute limit check
+    vt_time_minute = datetime.now()
+
     logger.debug("Starting main loop")
     while running_flag:
-        if last_date != datetime.now().date():
-            last_date = datetime.now().date()
-            vt_count_day = 0
-
-        if vt_count_day >= vt_limit_day:
-            logger.info("VirusTotal API limit for a day reached")
-            time.sleep(60)
-            continue
+        if vt_time is not None and vt_time.date() < datetime.now().date():
+            vt_time = None
+            vt_quota_exceeded = False 
 
         # Create database connection
         logger.debug(f"Connecting to database at {config.db_path}")
@@ -529,7 +586,10 @@ def main():
         # Load URLs from database to list
         url_list = []
         logger.debug(f"Loading URLs from database")
-        cursor_db.execute("SELECT url FROM urls WHERE evaluated = 'no'")
+        if vt_quota_exceeded:
+            cursor_db.execute("SELECT url FROM urls WHERE evaluated = 'no' AND eval_later != 'yes'")
+        else:
+            cursor_db.execute("SELECT url FROM urls WHERE evaluated = 'no'")
         url_list_db = cursor_db.fetchall()
 
         # Close database connection
