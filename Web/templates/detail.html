@@ -18,6 +18,7 @@
                 {{ url.url }}</h2>
             
             {% if url.evaluated == 'no' %} <p class="to-be-evaluated">to be evaluated</p>{% endif %}
+            {% if url.eval_later == 'yes' %} <p class="to-be-evaluated">URL is going to be evaluated after reset of VirusTotal limit</p>{% endif %}
             <button title="Edit" class="edit_btn"
                 onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
         </div>

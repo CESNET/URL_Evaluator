@@ -152,6 +152,7 @@ def parse_detail(url_detail):
     url.status = url_detail[14]
     url.last_active = url_detail[15]
     url.last_edit = url_detail[16]
+    url.eval_later = url_detail[17]
     url.ip = get_ip(url.url)
 
     return url
@@ -189,7 +190,7 @@ def parse_filters():
         
     try:
         if filter_params["evaluated"] == "no":
-            parsed_filters = parsed_filters + f" AND evaluated='{filter_params['evaluated']}'"
+            parsed_filters = parsed_filters + f" AND (evaluated='{filter_params['evaluated']}' OR eval_later='yes')"
     except KeyError:
         parsed_filters = parsed_filters + f" AND evaluated='yes'"
 
@@ -381,7 +382,7 @@ def detail():
     url = url.replace("'", "''")
 
     # get url details
-    select_sql = f"SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, url_occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit FROM urls WHERE url = '{url}' LIMIT 1"
+    select_sql = f"SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, url_occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = '{url}' LIMIT 1"
     url_detail = list_from_db(select_sql)
     url_detail = parse_detail(url_detail[0])
 
