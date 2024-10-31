@@ -2,6 +2,7 @@ import math
 import re
 import socket
 import sqlite3
+import time
 import flask
 import validators
 import requests
@@ -17,7 +18,7 @@ config_path='/data/url_evaluator/Web/web_config.yaml'
 
 class Config:
     def __init__(self) -> None:
-        with open('./web_config.yaml') as file:
+        with open(config_path) as file:
             self.config = yaml.safe_load(file)
             self.db_path = self.config["db_path"]
             self.misp_url = self.config["misp_url"]
@@ -81,7 +82,10 @@ def get_urlhaus_link(url):
     data = {'url' : url}
     response = requests.post('https://urlhaus-api.abuse.ch/v1/url/', data)
     # Parse the response from the API
-    json_response = response.json()
+    try:
+        json_response = response.json()
+    except (ValueError, requests.exceptions.RequestException):
+        return None
     if json_response['query_status'] == 'ok':
         return json_response['urlhaus_reference']
     else:
@@ -202,6 +206,47 @@ def get_sources():
     select_sources = "SELECT id, source FROM sources"
     sources = list_from_db(select_sources)
     return sources
+
+def db_connection(db_path: str)->sqlite3.Connection:
+    connected = False
+    # Create database connection
+    while not connected:
+        try:
+            conn_db = sqlite3.connect(db_path)
+            connected = True
+            print(connected)
+        except sqlite3.Error as e:
+            print(e)
+            print(f"Error while connecting to database: {e}")
+            time.sleep(1)
+    return conn_db
+
+def back_propagation(url: str, db_path: str):
+    conn_db = db_connection(db_path)
+    cursor_db = conn_db.cursor()
+    # get source URLs of the URL
+    cursor_db.execute("SELECT urls.url FROM url_source AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,))
+    src_urls = cursor_db.fetchall()
+    if len(src_urls) == 0:
+        return
+    print(f"URL {url} was found in downloaded content of {len(src_urls)} URLs")
+
+    src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
+    print(src_urls)
+
+    updated = False 
+    while not updated:
+        try:
+            cursor_db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+            print(f"URL {src_urls} were classified as malicious because it downloaded content from malicious URL {url}")
+            conn_db.commit()
+            updated = True
+        except sqlite3.Error as e:
+            print(e)
+            conn_db.rollback()
+            time.sleep(1)
+
+    conn_db.close()
         
 
 @app.route('/', methods=['GET', 'POST'])
@@ -379,6 +424,7 @@ def detail():
         cursor_db.execute("UPDATE urls SET evaluated = 'no' WHERE url = ?", (url,))
         conn_db.commit()
         conn_db.close()
+        return redirect(url_for('detail', url=url))
     url = url.replace("'", "''")
 
     # get url details
@@ -392,7 +438,7 @@ def detail():
     url_detail = parse_sources(url_detail, sources)
 
     # get source urls
-    select_src_urls = f"SELECT src_url FROM url_source WHERE url = '{url_detail.url}' AND src_url IS NOT NULL"
+    select_src_urls = f"SELECT src_url FROM url_source WHERE url = '{url_detail.url}' AND src_url IS NOT NULL AND src_url!=''"
     url_detail.src_urls = list_from_db(select_src_urls)
     if url_detail.src_urls and not url_detail.src:
         url_detail.src = "found in content of another URL"
@@ -452,6 +498,8 @@ def edit_detail():
         classification_reason = flask.request.form['reason']
         cursor_db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ? WHERE url = ?", (note, classification, classification_reason, user, url))
         conn_db.commit()
+        if classification == "malicious":
+            back_propagation(url, config.db_path)
         return redirect(url_for("main", show=show))
     
     url = url.replace("'", "''")
@@ -499,6 +547,9 @@ def bulk_edit_action():
         conn_db.commit()
     # cursor_db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ? WHERE url IN (" + ",".join("?" * len(selected_urls)) + ")", (note, classification, classification_reason, user, *selected_urls))
     # conn_db.commit()
+    if classification == "malicious":
+        for url in selected_urls:
+            back_propagation(url, config.db_path)
     return redirect(url_for("main"))
 
 @app.route('/api/url_stats', methods=['GET'])

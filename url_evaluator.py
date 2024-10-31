@@ -341,6 +341,34 @@ def add_new(url: str, command: str, src_url: str, config: Config):
     conn_db.close()
 
 
+def back_propagation(url: str, db_path: str):
+    db_connection(db_path)
+
+    cursor_db.execute("SELECT urls.url FROM url_source AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,))
+    src_urls = cursor_db.fetchall()
+    if len(src_urls) == 0:
+        return
+    logger.debug(f"URL {url} was found in downloaded content of {len(src_urls)} URLs")
+
+    src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
+
+    updated = False 
+    while not updated:
+        try:
+            cursor_db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+            logger.info(f"URL {src_urls} were classified as malicious because it downloaded content from malicious URL {url}")
+            conn_db.commit()
+            updated = True
+        except sqlite3.Error as e:
+            logger.info(f"Error while updating URL in database: {e}")
+            conn_db.rollback()
+            time.sleep(1)
+
+    conn_db.close()
+    
+
+
+
 def add_to_database(url: str, classification: str, classification_reason: str, vt_stats_json, hash: str, content_size: int, file_type: str, threat_label: str, db_path: str):
     """
     Add classified URL to database.
@@ -407,6 +435,12 @@ def add_to_database(url: str, classification: str, classification_reason: str, v
             time.sleep(1)
 
     conn_db.close()
+
+    # if the URL is malicious, check if this URL was found in downloaded content of another URL and if so, update the classification of the source URL
+    if classification == "malicious":
+        logger.info(f"Checking if URL {url} was found in downloaded content of another URL")
+        back_propagation(url, db_path)
+
     
 
 def get_blacklist(config: Config):
