@@ -69,3 +69,15 @@ FLASK_APP=template.py FLASK_ENV=development flask run --debug
 ```
 
 For permanent deployment of the web application, use Apache.
+
+## Publication
+
+The tool was presented at Network Security Operations workshop at CNSM'24:
+* M. Novotná and V. Bartoš, [URL Evaluator: Semi-automatic evaluation of suspicious URLs from honeypots](https://ieeexplore.ieee.org/abstract/document/10814604/). In 20th International Conference on Network and Service Management (CNSM 2024), Prague, Czech Republic, IFIP, 2024. (PDF: [paper](https://dl.ifip.org/db/conf/cnsm/cnsm2024/1571071957.pdf), [presentation slides](https://drive.google.com/file/d/13_w_WV5naYFWoykNANfaRwvJcrEjPLWU/view?usp=sharing))
+
+
+## Acknowledgment
+
+This work was partially supported by the [SOCCER project](https://soccer.agh.edu.pl/), which is funded under Grant Agreement No. 101128073 and supported by the European Cybersecurity Competence Centre.
+
+
