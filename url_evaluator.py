@@ -239,6 +239,10 @@ def download_content(url: str, config: Config):
         add_to_database(url, "unreachable", "Connection timeout", "", "", None, "", "", db_path=config.db_path)
         logger.debug(e)
         return
+    except requests.exceptions.TooManyRedirects as e:
+        add_to_database(url, "unreachable", "Too many redirects", "", "", None, "", "", db_path=config.db_path)
+        logger.debug(e)
+        return
     except requests.exceptions.ConnectionError as e:
         add_to_database(url, "unreachable", "Connection refused", "", "", None, "", "", db_path=config.db_path)
         logger.debug(e)
@@ -438,7 +442,7 @@ def add_to_database(url: str, classification: str, classification_reason: str, v
 
     # if the URL is malicious, check if this URL was found in downloaded content of another URL and if so, update the classification of the source URL
     if classification == "malicious":
-        logger.info(f"Checking if URL {url} was found in downloaded content of another URL")
+        logger.debug(f"Checking if URL {url} was found in downloaded content of another URL")
         back_propagation(url, db_path)
 
     
