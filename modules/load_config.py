@@ -16,5 +16,6 @@ class Config:
             self.bl_path = config["bl_path"]
             self.bl_update_time = config["bl_update_time"]
             self.log_file = config["log_file"]
+            self.http_proxy = config["http_proxy"]
 
 

@@ -22,6 +22,9 @@ from modules.load_config import Config
 from sqlite3 import Error
 from functools import lru_cache
 
+# Dictionary for HTTP proxy
+proxies = {}
+
 # Variables for database connection
 conn_db = None
 cursor_db = None
@@ -49,6 +52,14 @@ signals = {
     signal.SIGTERM: terminate_me,
     signal.SIGINT: terminate_me,
 }
+
+def set_proxies(config: Config):
+    global proxies
+    if config.http_proxy != "":
+        proxies = {
+            "http": config.http_proxy,
+            "https": config.http_proxy
+        }
 
 
 def is_valid_url(url: str) -> bool:
@@ -220,9 +231,10 @@ def download_content(url: str, config: Config):
         url     : URL to download
         config  : Config object
     """
+    global proxies
     logger.debug("Downloading URL")
     try:
-        header = requests.head(url, timeout=20)
+        header = requests.head(url, timeout=20, proxies=proxies)
         if header.status_code >= 400:
             add_to_database(url, "unreachable", f"Return code {header.status_code}", "", "", None, "", "", db_path=config.db_path)
             return
@@ -234,7 +246,7 @@ def download_content(url: str, config: Config):
                 add_to_database(url, "unclassified", "Content too big (>100MB)", "", "", content_size, "", "", db_path=config.db_path)
                 return
 
-        response = requests.get(url, timeout=20, stream=True)
+        response = requests.get(url, timeout=20, stream=True, proxies=proxies)
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
         add_to_database(url, "unreachable", "Connection timeout", "", "", None, "", "", db_path=config.db_path)
         logger.debug(e)
@@ -579,6 +591,7 @@ def main():
 
     try:
         config = Config(args.config)
+        set_proxies(config)
     except (FileNotFoundError, yaml.YAMLError):
         print("Error while loading configuration file", file=sys.stderr)
         exit(1)
