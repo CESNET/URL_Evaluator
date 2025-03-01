@@ -63,16 +63,8 @@ def set_proxies(config: Config):
 
 
 def is_valid_url(url: str) -> bool:
-    regex = re.compile(
-        r'^(?:http|ftp)s?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|'  # ...or ipv4
-        r'\[?[A-F0-9]*:[A-F0-9:]+\]?)'  # ...or ipv6
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE
-    )
-    return re.match(regex, url) is not None and "'" not in url and '"' not in url and ',' not in url
+    regex_pattern = r"^(?:https?:\/\/)?[a-zA-Z0-9.-]+(?::[0-9]+)?(?:\/[^\s$]*)?(\$[^\s]*)?$"
+    return re.match(regex_pattern, url) is not None and "'" not in url and '"' not in url and ',' not in url
 
 
 def db_connection(db_path):
@@ -274,7 +266,7 @@ def download_content(url: str, config: Config):
 
     # URL regex
     command_format = r"(.*\b(curl|wget)\b.*https?:\/\/[^\s]+.*)"
-    url_format = "(?<!(--referer|-e)(\s|\s\'|\s\"))(https?:\/\/.*?)(?=\s|;|\\||\\\\|\"|\')"
+    url_format = r"(?<!(--referer|-e)(\s|\s\'|\s\"))(https?:\/\/.*?)(?=\s|;|\\||\\\\|\"|\')"
 
     if "x-sh" in file_type or "sh" in file_type or "bash" in file_type or "shell" in file_type or "plain" in file_type:
         try:
@@ -286,7 +278,9 @@ def download_content(url: str, config: Config):
             command = command[0].strip()
             urls_reg = regex.findall(url_format, command)
             for url_found in urls_reg:
-                add_new(url_found[2].strip(), command, url, config)
+                url_found = url_found[2].strip()
+                if is_valid_url(url_found):
+                    add_new(url_found, command, url, config)
 
  
 
