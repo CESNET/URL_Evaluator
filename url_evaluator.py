@@ -163,7 +163,7 @@ def evaluate_later(url: str, db_path: str):
             time.sleep(1)
     conn_db.close()
 
-def check_hash(url: str, hash: str, file_type: str, content_size: str, config: Config):
+def check_hash(url: str, hash: str, file_type: str, content_size: int, config: Config):
     """
     Check hash of downloaded content in VirusTotal and MalwareBazaar.
     Parameters:
@@ -225,7 +225,9 @@ def download_content(url: str, config: Config):
     """
     global proxies
     logger.debug("Downloading URL")
+    # TODO FIXME: Recognize connection error to the final server or to our proxy - must be different results
     try:
+        # TODO: isn't there a way to limit the size of downloaded content other than to issue a separate HEAD request?
         header = requests.head(url, timeout=20, proxies=proxies)
         if header.status_code >= 400:
             add_to_database(url, "unreachable", f"Return code {header.status_code}", "", "", None, "", "", db_path=config.db_path)
@@ -268,6 +270,7 @@ def download_content(url: str, config: Config):
     command_format = r"(.*\b(curl|wget)\b.*https?:\/\/[^\s]+.*)"
     url_format = r"(?<!(--referer|-e)(\s|\s\'|\s\"))(https?:\/\/.*?)(?=\s|;|\\||\\\\|\"|\')"
 
+    # TODO FIXME: Use something more precise than "in" (e.g. "sh" in file_type can match a lot of things)
     if "x-sh" in file_type or "sh" in file_type or "bash" in file_type or "shell" in file_type or "plain" in file_type:
         try:
             content = response.content.decode("utf-8")

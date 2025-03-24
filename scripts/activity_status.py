@@ -18,7 +18,7 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 # Parse arguments
-parser = argparse.ArgumentParser(description="Script adding malicious URLs to URLhaus.")
+parser = argparse.ArgumentParser(description="Test each URL whether it's active (accessible) or not and set the corresponding flag in database.")
 parser.add_argument("--database", "-d", action="store", default="",
                     help="Path to a database where URLs are stored")
 args = parser.parse_args()

@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser(description="Script adding malicious URLs to MI
 parser.add_argument("--database", "-d", action="store", required=True,
                     help="Path to a database where URLs are stored")
 parser.add_argument("--key", "-k", action="store", required=True,
-                    help="API key for URLhaus")
+                    help="API key for MISP")
 args = parser.parse_args()
 
 # Connection to database
@@ -36,7 +36,8 @@ cursor = conn.cursor()
 logger.debug("Connected to database")
 
 # get not reported urls
-cursor.execute("SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE reported = 'no' and (classification = 'malicious' or classification == 'miner')")
+SQL_FILTER = "reported = 'no' and (classification = 'malicious' or classification = 'miner')"
+cursor.execute("SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE " + SQL_FILTER)
 rows = cursor.fetchall()
 logger.info(f"Found {len(rows)} new malicious URLs")
 
@@ -111,7 +112,7 @@ logger.debug("Added objects to event")
 misp.publish(event_id, alert=True)
 
 # Update database
-cursor.execute("UPDATE urls SET reported = 'yes' WHERE reported = 'no' AND classification = 'malicious'")
+cursor.execute("UPDATE urls SET reported = 'yes' WHERE " + SQL_FILTER)
 conn.commit()
 logger.debug("Updated database")
 

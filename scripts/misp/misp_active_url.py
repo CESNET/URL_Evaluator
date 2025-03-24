@@ -32,8 +32,9 @@ conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 logger.debug("Connected to database")
 
-# get not reported urls
-cursor.execute("SELECT url, status  FROM urls WHERE status_changed = 'yes' and classification = 'malicious'")
+# get URLs whose status (active/inactive) has changed
+SQL_FILTER = "status_changed = 'yes' and (classification = 'malicious' or classification = 'miner')"
+cursor.execute("SELECT url, status  FROM urls WHERE " + SQL_FILTER)
 rows = cursor.fetchall()
 
 if rows == []:
@@ -92,7 +93,7 @@ logger.info("Updated status of URLs in MISP")
 
 
 # Update database
-cursor.execute("UPDATE urls SET status_changed = 'no' WHERE status_changed = 'yes' AND classification = 'malicious'")
+cursor.execute("UPDATE urls SET status_changed = 'no' WHERE " + SQL_FILTER)
 conn.commit()
 logger.debug("Updated database")
 
