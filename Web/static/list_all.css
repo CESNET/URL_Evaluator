@@ -1,4 +1,8 @@
-table.list, .active-filter, .active-add, .select-all, .selected-urls{
+table.list,
+.active-filter,
+.active-add,
+.select-all,
+.selected-urls {
   border-collapse: collapse;
   width: 90%;
   min-width: 800px;
@@ -23,18 +27,22 @@ table.list {
 .table {
   border-collapse: collapse;
 }
+
 .table,
 .table th,
 .table td {
   border: 1px solid #ccc;
 }
+
 .table th,
 .table td {
   padding: 0.5rem;
 }
+
 .table th {
   position: relative;
 }
+
 .resizer {
   position: absolute;
   top: 0;
@@ -43,6 +51,7 @@ table.list {
   cursor: col-resize;
   user-select: none;
 }
+
 .resizer:hover,
 .resizing {
   border-right: 2px solid blue;
@@ -66,7 +75,8 @@ table.list {
 }
 
 .list tbody tr:nth-child(even) {
-  background-color: #dedede;;
+  background-color: #dedede;
+  ;
 }
 
 .list tbody tr:last-child {
@@ -113,11 +123,12 @@ table.list {
   margin: 0 5px;
 }
 
-.list .classification p{
+.list .classification p {
   display: flex;
   align-items: center;
   justify-content: center;
 }
+
 .list .classification p::before {
   content: "";
   width: 10px;
@@ -133,7 +144,7 @@ table.list {
   justify-content: center;
 }
 
-.list tr:first-child{
+.list tr:first-child {
   padding: 0;
   align-items: center;
 }
@@ -176,11 +187,18 @@ table.list {
 }
 
 .list .status.active {
-  color:#29c000
+  color: #29c000
 }
 
 .list .status.inactive {
-  color:#5c5c5c
+  color: #5c5c5c
+}
+
+.btn-select-line button {
+  display: inline-flex;
+  /* or inline-block */
+  width: auto;
+  /* Make sure it's not forcing full width */
 }
 
 form.selected-urls {
@@ -200,7 +218,7 @@ form.selected-urls button {
   margin: 5px;
 }
 
-#list_all .change_page p{
+#list_all .change_page p {
   margin: 0 10px;
 }
 
@@ -210,9 +228,9 @@ form.selected-urls button {
 
 #list_all .change_page .disabled {
   background-color: #ccc;
-  color: #999; 
-  cursor: not-allowed; 
-  pointer-events: none; 
+  color: #999;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .btn-line {
@@ -225,41 +243,41 @@ form.selected-urls button {
   width: 90%;
 }
 
-.filter-btn{
+.filter-btn {
   display: flex;
   justify-content: right;
   align-items: center;
 }
 
-.filter-btn button{
+.filter-btn button {
   margin: 10px;
   margin-bottom: 0;
 }
 
-#list_all .select{
+#list_all .select {
   display: none;
 }
 
-#list_all .active-select{
+#list_all .active-select {
   display: block !important;
 }
 
 
-#list_all #filters{
+#list_all #filters {
   display: none;
 }
 
-#list_all .active-filter{
+#list_all .active-filter {
   display: block !important;
 }
 
-#list_all #filters form{
+#list_all #filters form {
   display: flex;
   flex-direction: column;
-  
+
 }
 
-#list_all #filters .filter-wrap{
+#list_all #filters .filter-wrap {
   width: 100%;
   display: grid !important;
   column-gap: 30px;
@@ -267,11 +285,11 @@ form.selected-urls button {
   grid-template-rows: 1fr 1fr;
 }
 
-#list_all #filters .filter-wrap input{
+#list_all #filters .filter-wrap input {
   width: 100%;
 }
 
-#list_all #filters .filter-submit{
+#list_all #filters .filter-submit {
   align-self: flex-end;
   margin-top: 20px;
   width: 200px;
@@ -283,11 +301,11 @@ form.selected-urls button {
   padding: 20px;
 }
 
-.filter-label{
+.filter-label {
   display: block;
 }
 
-.filter-input{
+.filter-input {
   height: 32px;
   border-radius: 10px;
   border-color: #cbcbcb;
@@ -296,7 +314,7 @@ form.selected-urls button {
   margin-bottom: 10px;
 }
 
-select{
+select {
   height: 30px;
 }
 
@@ -333,4 +351,3 @@ select{
 .add-response.success {
   background-color: rgba(104, 228, 104, 0.849);
 }
-

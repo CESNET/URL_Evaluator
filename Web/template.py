@@ -514,6 +514,20 @@ def edit_detail():
 @app.route('/bulk_edit', methods=['GET', 'POST'])
 def bulk_edit():
     user = get_user(flask.request.environ)
+    action = flask.request.form.get("action")
+    if action == "reevaluate":
+        selected_urls = flask.request.form.getlist('selected_urls_list[]')
+        if selected_urls != []:
+            urls_string = "('" + "', '".join(selected_urls) + "')"
+            conn_db = sqlite3.connect(config.db_path)
+            cursor_db = conn_db.cursor()
+            cursor_db.execute(f"UPDATE urls SET evaluated = 'no' WHERE url IN {urls_string}")
+            conn_db.commit()
+            conn_db.close()
+
+        return redirect(url_for("main"))
+
+
     print(flask.request.method)
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
     print(selected_urls)
