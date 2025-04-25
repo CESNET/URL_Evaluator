@@ -227,20 +227,32 @@ def download_content(url: str, config: Config):
     logger.debug("Downloading URL")
     # TODO FIXME: Recognize connection error to the final server or to our proxy - must be different results
     try:
-        # TODO: isn't there a way to limit the size of downloaded content other than to issue a separate HEAD request?
-        header = requests.head(url, timeout=20, proxies=proxies)
-        if header.status_code >= 400:
-            add_to_database(url, "unreachable", f"Return code {header.status_code}", "", "", None, "", "", db_path=config.db_path)
-            return
-        
-        if "content-length" in header.headers.keys():
-            content_size = int(header.headers['content-length'])
-            content_size_mb = content_size / (1024 * 1024)
-            if content_size_mb > 100:
-                add_to_database(url, "unclassified", "Content too big (>100MB)", "", "", content_size, "", "", db_path=config.db_path)
+        max_bytes = 100 * 1024 * 1024
+
+        # Use GET with stream=True to avoid downloading the whole body
+        with requests.get(url, stream=True, proxies=proxies) as r:
+            # response.raise_for_status()
+            if r.status_code == 503:
+                add_to_database(url, "unreachable","Connection refused", "", "", None, "", "", db_path=config.db_path)
                 return
 
-        response = requests.get(url, timeout=20, stream=True, proxies=proxies)
+            if not r.ok:
+                add_to_database(url, "unreachable", f"Return code {r.status_code}", "", "", None, "", "", db_path=config.db_path)
+                return
+            
+            content_length = r.headers.get('Content-Length', None) # get only length of content from headers
+            if content_length is None:
+                add_to_database(url, "unclassified", "", "", "", None, "", "", db_path=config.db_path)
+                return 
+
+            file_size = int(content_length)
+            if file_size > max_bytes:
+                add_to_database(url, "unclassified", f"File too large: {file_size / (1024 * 1024):.2f} MB", "", "", None, "", "", db_path=config.db_path)
+
+                return None
+            content = r.content
+            response = r
+
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
         add_to_database(url, "unreachable", "Connection timeout", "", "", None, "", "", db_path=config.db_path)
         logger.debug(e)
@@ -254,14 +266,14 @@ def download_content(url: str, config: Config):
         logger.debug(e)
         return
 
-    downloaded_size = len(response.content)
+    downloaded_size = len(content)
 
     file_type = ""
     if "content-type" in response.headers.keys():
         file_type = response.headers['content-type'].split(";")[0]
     else:
         try:
-            file_type = magic.from_buffer(response.content, mime=True)
+            file_type = magic.from_buffer(content, mime=True)
         except Exception as e:
             logger.info(f"Couldn't determine file type. Error: {e}")
 
@@ -273,7 +285,7 @@ def download_content(url: str, config: Config):
     # TODO FIXME: Use something more precise than "in" (e.g. "sh" in file_type can match a lot of things)
     if "x-sh" in file_type or "sh" in file_type or "bash" in file_type or "shell" in file_type or "plain" in file_type:
         try:
-            content = response.content.decode("utf-8")
+            content = content.decode("utf-8")
         except UnicodeDecodeError:
             content = ""
         commands_reg = re.findall(command_format, content) 
@@ -286,8 +298,10 @@ def download_content(url: str, config: Config):
                     add_new(url_found, command, url, config)
 
  
+    if isinstance(content, str):
+        content = content.encode('utf-8')
 
-    hash = hashlib.sha1(response.content).hexdigest()
+    hash = hashlib.sha1(content).hexdigest()
 
     check_hash(url, hash, file_type, downloaded_size, config)
 
