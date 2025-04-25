@@ -7,7 +7,7 @@ import logging
 import sys
 
 # parse arguments
-parser = argparse.ArgumentParser(description="Set to_ids flag for URLs in MISP.")
+parser = argparse.ArgumentParser(description="Actively test responsibility of malicious URLs in MISP and set the to_ids flag accordingly.")
 parser.add_argument("-m", "--misp-url", help="Base URL of the MISP instance", required=True)
 parser.add_argument("-k", "--key", help="API key for the MISP instance", required=True)
 args = parser.parse_args()

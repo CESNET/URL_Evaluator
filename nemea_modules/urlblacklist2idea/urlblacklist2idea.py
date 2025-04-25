@@ -40,8 +40,10 @@ def create_msg(rec, details):
         msg = msg + "."
     elif 200 <= rec.HTTP_RESPONSE_STATUS_CODE < 300:
         msg = msg + " and successfully downloaded some content."
-    else:
-        msg = msg + f" but it seems it failed to download a content (response code {rec.HTTP_RESPONSE_STATUS_CODE})."
+    elif rec.HTTP_RESPONSE_STATUS_CODE >= 400:
+        msg = msg + f", but it seems it failed to download the content (response code {rec.HTTP_RESPONSE_STATUS_CODE})."
+    else: # 3xx (redirection) or 1xx (informational, doesn't occur normally)
+        msg = msg + f", but we don't know if it downloaded any content (response code {rec.HTTP_RESPONSE_STATUS_CODE})."
 
     classification = details.get("classification", None)
     if classification == "malicious":
@@ -49,13 +51,12 @@ def create_msg(rec, details):
             msg = msg + f" This URL is known to host a malware ({details.get('threat_label')})."
         else:
             msg = msg + " This URL is known to host a malware."
+        if 200 <= rec.HTTP_RESPONSE_STATUS_CODE < 300:
+            msg = msg + " If the content was executed, the host may now be infected."
+        else:
+            msg = msg + " If the connection was successful and the content executed, the host may now be infected."
     elif classification == "miner":
         msg = msg + " This URL is known to host a crypto miner."
-    
-    if rec.HTTP_RESPONSE_STATUS_CODE == 0:
-        msg = msg + " If the connection was successful and content was executed, the host may now be infected."
-    elif 200 <= rec.HTTP_RESPONSE_STATUS_CODE < 300:
-        msg = msg + " If the content was executed, the host may now be infected."
 
     return msg
 
