@@ -310,14 +310,15 @@ def is_active(url: str):
         url     : URL to check
     """
     try:
-        response = requests.head(url, timeout=20)
-        if response.status_code >= 400:
-            return False
-        else:
-            return True
-    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
-        return False
-    except requests.exceptions.ConnectionError:
+        with requests.get(url, stream=True, proxies=proxies, timeout=10) as r:
+            if r.ok:
+                logger.info(f"URL {url} is active.")
+                return True
+            else:
+                logger.info(f"URL {url} is not active.")
+                return False
+    except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
+        logger.info(f'Connection error while checking if URL is active: {e}')
         return False
 
 def add_new(url: str, command: str, src_url: str, config: Config):
