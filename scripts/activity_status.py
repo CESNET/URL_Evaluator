@@ -19,9 +19,13 @@ logger.addHandler(console_handler)
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Test each URL whether it's active (accessible) or not and set the corresponding flag in database.")
-parser.add_argument("--database", "-d", action="store", default="",
+parser.add_argument("--database", "-d", action="store", default="", required=True,
                     help="Path to a database where URLs are stored")
+parser.add_argument("--proxy", "-p", action="store", default="", required=True,
+                    help="Proxy to connect to URLs.")
 args = parser.parse_args()
+
+proxies = {}
 
 
 def retry_connection(db_path, logger):
@@ -37,8 +41,8 @@ def retry_connection(db_path, logger):
 
 def is_url_active(url, logger):
     try:
-        response = requests.head(url, timeout=5)
-        return response.status_code < 400
+        with requests.get(url, stream=True, proxies=proxies, timeout=10) as r:
+            return r.status_code < 400
     except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
         logger.debug(f'Connection error: {e}')
         return False
@@ -106,11 +110,18 @@ def check_active_urls(config, urls, logger):
 
 
 def main():
+    global proxies
+
     args = parser.parse_args()
     end = False
     url_limit = 1000
 
     first = 0
+
+    proxies = {
+            "http": args.proxy,
+            "https": args.proxy
+        }
 
     # Load data from the database
     urls = get_urls(args.database, logger)
