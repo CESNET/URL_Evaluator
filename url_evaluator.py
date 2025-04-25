@@ -540,12 +540,16 @@ def check_urls(url_list: list, config: Config, bl_list: list):
                     url.encode()).decode().strip("=")
                 report = vtotal.request(f"urls/{url_id}")
             except virustotal_python.VirustotalError as err:
-                logger.info(
-                    f"Failed to send URL: {url} for analysis and get the report: {err}")
-                if "429" in str(err):
-                    logger.info("VirusTotal API limit for the day exceeded")
-                    vt_quota_exceeded = True
-                    vt_time = datetime.now()
+                try: 
+                    if err.args[0].status_code == 404:
+                        logger.info(f"VirusTotal does not have information about URL {url}")
+                    elif err.args[0].status_code == 429:
+                        logger.info("VirusTotal API limit for the day exceeded")
+                        vt_quota_exceeded = True
+                        vt_time = datetime.now()
+                except (IndexError, AttributeError):
+                    logger.info(err)
+                
                 download_content(url, config)
                 continue
 
