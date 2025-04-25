@@ -478,7 +478,7 @@ def detail():
     links = {
         "misp": link_misp,
         "reason-link": link,
-        "joe-sandbox": f"https://www.joesandbox.com/search?q={url_detail.hash}",
+        "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}",
     }
 
     return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, link_misp=link_misp, not_active=not_active)
