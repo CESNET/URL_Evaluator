@@ -280,8 +280,8 @@ def download_content(url: str, config: Config):
     command_format = r"(.*\b(curl|wget)\b.*https?:\/\/[^\s]+.*)"
     url_format = r"(?<!(--referer|-e)(\s|\s\'|\s\"))(https?:\/\/.*?)(?=\s|;|\\||\\\\|\"|\')"
 
-    # TODO FIXME: Use something more precise than "in" (e.g. "sh" in file_type can match a lot of things)
-    if "x-sh" in file_type or "sh" in file_type or "bash" in file_type or "shell" in file_type or "plain" in file_type:
+    types_list = ["application/x-sh", "aplication/x-shellscript", "text/plain", "text/x-shellscript", "text/x-sh"]
+    if file_type in types_list:
         try:
             content = content.decode("utf-8")
         except UnicodeDecodeError:
