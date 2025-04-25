@@ -201,7 +201,7 @@
           <p>{{ url[4] }}</p>
         </td>
         <td class="status {{url[7]}}">{{ url[7] }}</td>
-        <td class="note"> {% if url[6] != "" and url[6] %} <img src="{{ url_for(" static", filename="img/note.png" ) }}"
+        <td class="note"> {% if url[6] != "" and url[6] %} <img src="{{ url_for("static", filename="img/note.png" ) }}"
             alt="note" title="{{ url[6] }}"> {% endif %} </td>
         <td class="reason">{{ url[5] }}</td>
         <td class="btn">
