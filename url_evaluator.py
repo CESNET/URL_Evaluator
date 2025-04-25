@@ -225,13 +225,11 @@ def download_content(url: str, config: Config):
     """
     global proxies
     logger.debug("Downloading URL")
-    # TODO FIXME: Recognize connection error to the final server or to our proxy - must be different results
     try:
         max_bytes = 100 * 1024 * 1024
 
         # Use GET with stream=True to avoid downloading the whole body
         with requests.get(url, stream=True, proxies=proxies) as r:
-            # response.raise_for_status()
             if r.status_code == 503:
                 add_to_database(url, "unreachable","Connection refused", "", "", None, "", "", db_path=config.db_path)
                 return
