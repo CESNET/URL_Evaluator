@@ -19,6 +19,8 @@ import regex as re
 from datetime import datetime
 from datetime import timedelta
 from warden_client import Client, Error, read_cfg
+from collections import Counter
+
 
 argparser = argparse.ArgumentParser(description="Warden source for URL evaluator -- receieves messages from Warden, finds suspicious URLs and saves them to URL evaluator database.")
 argparser.add_argument('-w', '--warden_config', help='File with Warden configuration', required=True)
@@ -59,6 +61,8 @@ def findURL(content, idea_id, detected_time, database, source_id):
     :param conn: Connection to database
     """
 
+    global discovered_urls
+
     # hash of the command
     command_id = hashlib.md5(content.encode()).hexdigest()
 
@@ -90,8 +94,6 @@ def findURL(content, idea_id, detected_time, database, source_id):
                 continue
             else:
                 discovered_urls.append(url)
-                with open(discovered_urls_file, 'a') as f:
-                    f.write(url + "\n")
 
             logger.info("Found URL: %s", url)
             
@@ -197,7 +199,7 @@ def main():
     # Set logger
     global logger
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
-    logging.basicConfig(filename=args.log_file, filemode="a", format=LOGFORMAT, level=logging.DEBUG)
+    logging.basicConfig(filename=args.log_file, filemode="a", format=LOGFORMAT, level=logging.INFO)
     logger = logging.getLogger("warden2evaluator")
 
     logger.info("Starting warden2evaluator")
