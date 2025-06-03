@@ -1,11 +1,14 @@
 # download URLhaus abuse.ch blacklist every 15 minutes
 */15 * * * * url_evaluator /usr/bin/curl -s -S https://urlhaus.abuse.ch/downloads/text/ > /data/url_evaluator/Blacklists/blacklist.txt
 
+# run script that sets sighting in MISP of URLs that were lastly seen yesterday
+10 0 * * * url_evaluator python3 /data/url_evaluator/scripts/misp/misp_update_sighting.py -m https://misp-soc.liberouter.org -k $(cat /data/url_evaluator/Config/keys/misp) -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/misp.log
+
 # get URLs from Honeynet at 4:30am
 30 4 * * * url_evaluator python3 /data/url_evaluator/scripts/honeynetAsia2db.py -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/honeynetAsia2db.log 2>&1
 
 # run script checking activity status of URLs
-0 8 * * * url_evaluator python3 /data/url_evaluator/scripts/activity_status.py -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/activity_status.log
+0 8 * * * url_evaluator python3 /data/url_evaluator/scripts/activity_status.py -p "http://scanner.liberouter.org:3128" -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/activity_status.log
 
 # 9 am run script that sends data from evaluator to MISP
 0 9 * * * url_evaluator python3 /data/url_evaluator/scripts/misp/evaluator2misp.py -d /data/url_evaluator/url.sqlite -k $(cat /data/url_evaluator/Config/keys/misp) >> /data/url_evaluator/logs/evaluator2misp.log 2>&1
@@ -14,7 +17,7 @@
 10 10 * * * url_evaluator python3 /data/url_evaluator/scripts/misp/misp_active_url.py -m https://misp-soc.liberouter.org -k $(cat /data/url_evaluator/Config/keys/misp) -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/misp.log
 
 # run script that sends malicious URLs to URLhaus
-0 10 * * * url_evaluator python3 /data/url_evaluator/scripts/send2urlhaus.py -d /data/url_evaluator/url.sqlite -k $(cat /data/url_evaluator/Config/keys/urlhaus) >> /data/url_evaluator/logs/send2urlhaus.log 2>&1
+0 * * * * url_evaluator python3 /data/url_evaluator/scripts/send2urlhaus.py -d /data/url_evaluator/url.sqlite -k $(cat /data/url_evaluator/Config/keys/urlhaus) >> /data/url_evaluator/logs/send2urlhaus.log 2>&1
 
 # remove records URLs that weren't seen for 30 days
 30 10 * * * url_evaluator python3 /data/url_evaluator/scripts/cleanup_db.py -d /data/url_evaluator/url.sqlite >> /data/url_evaluator/logs/url_evaluator.log 2>&1
