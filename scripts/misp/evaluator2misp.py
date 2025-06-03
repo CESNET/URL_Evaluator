@@ -59,6 +59,7 @@ event = MISPEvent()
 event.add_tag("tlp:clear")
 event.add_tag("coa:discover=honeypot")
 event.add_tag('rsit:malicious-code="malware-distribution"')
+event.add_tag('CESNET:malware-urls')
 date = datetime.now().strftime("%Y-%m-%d")
 event.info = f"Malicious URLs from SSH honeypots [{date}]"
 event.date = date
