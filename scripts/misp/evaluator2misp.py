@@ -105,6 +105,10 @@ for row in rows:
     if threat_label:
         new_object.add_attribute(object_relation="threat-label", simple_value=threat_label, Attribute = {"type": "text", "value": threat_label})
     misp.add_object(event=event, misp_object=new_object)
+
+    # set sighting for this url
+    sighting = {"value": url, "timestamp": first_seen}
+    misp.add_sighting(sighting)
 logger.debug("Added objects to event")
 
 # updated_event = misp.update_event(event)
