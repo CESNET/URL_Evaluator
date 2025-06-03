@@ -113,7 +113,7 @@ def findURL(content, idea_id, detected_time, database, source_id):
             # check if url could be DDoS target
             if agr_url[1] >= 10:
                 logger.info(f"URL {url} evaluated as DDoS target")
-                cursor.execute("UPDATE OR IGNORE urls SET evaluated = 'yes', classification = 'harmless', classification_reason = 'DDoS target' WHERE url = ?", (url))
+                cursor.execute("UPDATE OR IGNORE urls SET evaluated = 'yes', classification = 'harmless', classification_reason = 'DDoS target' WHERE url = ?", (url,))
                 conn.commit()
         conn.close()
 
