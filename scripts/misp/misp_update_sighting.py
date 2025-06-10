@@ -35,7 +35,6 @@ logger.debug("Connected to database")
 
 # get URLs that were seen yesterday
 yesterday = datetime.today() - timedelta(days=1)
-yesterday_ts = datetime(yesterday.year, yesterday.month, yesterday.day).timestamp() # get yesterday midnight timestamp
 logger.debug(f"Yesterday date: {yesterday}")
 cursor.execute("SELECT url FROM urls WHERE last_seen=? AND (classification='malicious' OR classification='miner')", (yesterday.date(),))
 rows = cursor.fetchall()
@@ -59,7 +58,7 @@ logger.debug("Connected to MISP")
 
 # set sighting for URLs that were lastly seen yesterday
 for row in rows:
-    sighting = {"value": row[0], "timestamp": yesterday_ts}
+    sighting = {"value": row[0]}
     misp.add_sighting(sighting)
     
 logger.info("Updated sighting of URLs in MISP")
