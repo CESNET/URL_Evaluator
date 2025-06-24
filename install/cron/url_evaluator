@@ -1,0 +1,2 @@
+# Generate blacklist for NEMEA
+# 0 12 * * * url_evaluator python3 /url_evaluator/scripts/misp2nemea.py --misp_url <MISP_URL> --misp_key <MISP_KEY> --pid <PID_FILE> --outfile <OUTPUT_FILE> --verbose

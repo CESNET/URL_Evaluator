@@ -1,0 +1,84 @@
+# Path to database file
+db_path: "/data/url_evaluator/db.sqlite"
+
+# Scheduler config
+# Uses common cron-style format, e.g.:
+#   hour: */4
+#   minute: 15
+scheduler:
+  timezone: "UTC"
+  honeynetasia2evaluator:
+    hour: 12
+    minute: 0
+  activity_scanner:
+    hour: 12
+    minute: 5
+  db_cleaner:
+    hour: 12
+    minute: 25
+  evaluator2urlhaus:
+    hour: 12
+    minute: 30
+  evaluator2misp:
+    hour: 12
+    minute: 30
+
+# Max age of inactive/invalid URLs
+# Older records are automatically deleted
+max_age_inactive: 30 # days
+max_age_invalid: 7 # days
+
+# Max size of downloaded content
+max_file_size: 100 # MB
+
+# How often should evaluation blacklist be updated
+bl_update_time: 15 # minutes
+
+# HTTP proxy used for connections to suspicious URLs
+# Keep empty if you aren't using a proxy
+http_proxy: ""
+
+# Warden client config
+warden_config: "/etc/url_evaluator/warden_client.cfg"
+
+# Warden node-source mapping (dict source -> node name regex)
+# Events that do not match any of the listed nodes will be ignored
+warden_sources:
+  "CESNET Hugo": "hugo.*(cowrie|dionaea)"
+  "CZ.NIC HaaS": "cznic_haas"
+  "Warden (unknown node)": ""
+
+# MISP
+misp_url: "!!! CHANGE THIS !!!"
+misp_key: "!!! CHANGE THIS !!!"
+misp_verify_cert: false
+
+# Virustotal
+vt_url: "https://www.virustotal.com/api/v3/"
+vt_key: "!!! CHANGE THIS !!!"
+vt_minute_quota: 4
+vt_threshold:
+  malicious: 0.2
+  harmless: 0.8
+
+# URLhaus
+urlhaus_blacklist_url: "https://urlhaus.abuse.ch/downloads/text/"
+urlhaus_detail_url: "https://urlhaus-api.abuse.ch/v1/url/"
+urlhaus_submit_url: "https://urlhaus.abuse.ch/api/"
+urlhaus_key: "!!! CHANGE THIS !!!"
+
+# MalwareBazaar
+mb_url: "https://mb-api.abuse.ch/api/v1/"
+
+# Honeynet.Asia
+hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"
+
+# URL of Evaluator root (without trailing slash, e.g. "/url_evaluator")
+# All evaluator pages are relative to this
+# Keep empty if evaluator resides in web server's root directory
+base_url: "/url_evaluator"
+
+# Secret key used by Flask for various security purposes
+# Should be set automatically during installation. If not, use e.g.:
+#   head -c 24 /dev/urandom | base64
+flask_secret_key: "!!! CHANGE THIS !!!"

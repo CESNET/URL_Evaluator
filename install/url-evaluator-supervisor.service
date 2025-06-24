@@ -1,0 +1,17 @@
+[Unit]
+Description=supervisord instance for controlling URL Evaluator components
+Documentation=http://supervisord.org
+After=network.target named.service
+
+[Service]
+Type=forking
+User=url_evaluator
+Group=url_evaluator
+RuntimeDirectory=url_evaluator
+RuntimeDirectoryMode=775
+ExecStart=/usr/bin/supervisord -c /etc/url_evaluator/supervisord.conf
+ExecReload=/usr/bin/supervisorctl -c /etc/url_evaluator/supervisord.conf reread
+ExecStop=/usr/bin/supervisorctl -c /etc/url_evaluator/supervisord.conf shutdown
+
+[Install]
+WantedBy=multi-user.target

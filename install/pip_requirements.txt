@@ -1,0 +1,10 @@
+requests
+apscheduler
+regex
+python-magic
+pyyaml
+virustotal-python
+pymisp==2.4.196
+flask
+werkzeug
+pysqlite3-binary
