@@ -56,13 +56,14 @@ def process_attachment(db, commands, idea_id, detected_time, source):
         discovered_today.add(url)
 
         logger.info(f"Discovered new URL: {url}")
+        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
         db.execute(
             """
-            INSERT INTO urls (url, first_seen, last_seen, src) VALUES (?, ?, ?, ?)
+            INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
             ON CONFLICT(url) DO UPDATE SET
                 occurrences = occurrences + 1,
                 last_seen = excluded.last_seen;
-            """, (url, detected_time, detected_time, source),)
+            """, (url, detected_time, detected_time),)
 
         if cnt >= 10:
             db.execute("UPDATE urls SET evaluated = 'yes', classification = 'harmless', classification_reason = 'DDoS target' WHERE url = ?", (url,))

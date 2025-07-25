@@ -69,7 +69,7 @@ def get_misp_link(url_detail):
         try:
             events = misp.search(controler="events", value=url_detail.url, type_attribute='url')
             event_id = events[0]['Event']['id']
-        except (PyMISPError, IndexError):
+        except Exception:
             return None
         return f"{config.misp_url}/events/view/{event_id}"
     else:
@@ -117,7 +117,7 @@ def parse_filters():
         if param == "status":
             parsed_filters += f" AND status='{value}'"
         if param == "src":
-            parsed_filters += f" AND src='{value}'"
+            parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
         if param == "evaluated":
             parsed_filters += f" AND evaluated='{value}'"
     parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
@@ -125,7 +125,7 @@ def parse_filters():
 
 
 def back_propagation(db, url):
-    src_urls = db.execute("SELECT urls.url FROM url_source AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+    src_urls = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
     if src_urls:
         src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
         db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
@@ -184,7 +184,8 @@ def list_all():
                     t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
                     if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen, src) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, 'Manual'))
+                        db.execute("INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)", (add_url, t_now, t_now))
+                        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
                         adding = "success"
                     else:
                         adding = "in_db"
@@ -214,7 +215,7 @@ def list_all():
         url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
 
         # get list of sources
-        sources = db.execute("SELECT DISTINCT src FROM urls").fetchall()
+        sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()
 
         # get number of pages
         record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
@@ -228,23 +229,23 @@ class URLDetail:
         self.url = url_detail[0]
         self.first_seen = url_detail[1]
         self.last_seen = url_detail[2]
-        self.src = url_detail[3]
-        self.hash = url_detail[4]
-        self.classification = url_detail[5]
-        self.reason = url_detail[6]
-        self.note = url_detail[7]
-        self.reported = url_detail[8]
-        self.occurrences = url_detail[9]
-        self.vt_stats = url_detail[10]
-        self.evaluated = url_detail[11]
-        self.mime = url_detail[12]
-        self.content_size = url_detail[13]
-        self.threat_label = url_detail[14]
-        self.status = url_detail[15]
-        self.last_active = url_detail[16]
-        self.last_edit = url_detail[17]
-        self.eval_later = url_detail[18]
+        self.hash = url_detail[3]
+        self.classification = url_detail[4]
+        self.reason = url_detail[5]
+        self.note = url_detail[6]
+        self.reported = url_detail[7]
+        self.occurrences = url_detail[8]
+        self.vt_stats = url_detail[9]
+        self.evaluated = url_detail[10]
+        self.mime = url_detail[11]
+        self.content_size = url_detail[12]
+        self.threat_label = url_detail[13]
+        self.status = url_detail[14]
+        self.last_active = url_detail[15]
+        self.last_edit = url_detail[16]
+        self.eval_later = url_detail[17]
         self.ip = get_ip(self.url)
+        self.src = []
         self.src_urls = []
         self.contained_urls = []
 
@@ -261,9 +262,10 @@ def detail():
             return redirect(url_for('detail', url=url))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, src, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
-        url_detail.src_urls = db.execute("SELECT src_url FROM url_source WHERE url = ?", (url_detail.url,)).fetchall()
-        url_detail.contained_urls = db.execute("SELECT url FROM url_source WHERE src_url = ?", (url,)).fetchall()
+        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
+        url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
+        url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
 
     # count not active days
@@ -358,7 +360,8 @@ def api_url_stats():
     except BadRequestKeyError:
         return make_response(jsonify({'error': 'Not found'}), 404)
     with SQLiteWrapper(config.db_path) as db:
-        url_detail = db.execute("SELECT url, first_seen, last_seen, src, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label FROM urls WHERE url = ? LIMIT 1;", (url,)).fetchall()
+        url_detail = db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label FROM urls WHERE url = ? LIMIT 1;", (url,)).fetchall()
+        url_sources = db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()
         if not url_detail:
             return make_response(jsonify({'error': 'Not found'}), 404)
 
@@ -366,17 +369,17 @@ def api_url_stats():
         "url": url_detail[0][0],
         "first_seen": url_detail[0][1],
         "last_seen": url_detail[0][2],
-        "src": url_detail[0][3],
-        "hash": url_detail[0][4],
-        "classification": url_detail[0][5],
-        "classification_reason": url_detail[0][6],
-        "note": url_detail[0][7],
-        "reported": url_detail[0][8],
-        "occurrences": url_detail[0][9],
-        "vt_stats": url_detail[0][10],
-        "evaluated": url_detail[0][11],
-        "file_mime_type": url_detail[0][12],
-        "content_size": url_detail[0][13],
-        "threat_label": url_detail[0][14]
+        "hash": url_detail[0][3],
+        "classification": url_detail[0][4],
+        "classification_reason": url_detail[0][5],
+        "note": url_detail[0][6],
+        "reported": url_detail[0][7],
+        "occurrences": url_detail[0][8],
+        "vt_stats": url_detail[0][9],
+        "evaluated": url_detail[0][10],
+        "file_mime_type": url_detail[0][11],
+        "content_size": url_detail[0][12],
+        "threat_label": url_detail[0][13],
+        "src": ", ".join(url_sources),
     }
     return make_response(jsonify(return_dict), 200)

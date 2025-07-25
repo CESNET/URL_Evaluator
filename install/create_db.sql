@@ -18,9 +18,18 @@ CREATE TABLE url_source
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     url     TEXT REFERENCES urls(url),
+    source  TEXT,
+
+    CONSTRAINT url_source_unique UNIQUE (url, source)
+);
+
+CREATE TABLE discovered_urls
+(
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    url     TEXT REFERENCES urls(url),
     src_url TEXT REFERENCES urls(url),
 
-    CONSTRAINT url_source_unique UNIQUE (url, src_url)
+    CONSTRAINT discovered_urls_unique UNIQUE (url, src_url)
 );
 
 CREATE TABLE urls
@@ -28,7 +37,6 @@ CREATE TABLE urls
     url                   TEXT PRIMARY KEY,
     first_seen            DATE,
     last_seen             DATE,
-    src                   TEXT,
     hash                  TEXT,
     classification        TEXT DEFAULT 'unclassified' CHECK (classification IN ('malicious', 'harmless', 'unreachable', 'unclassified', 'invalid', 'miner')),
     classification_reason TEXT DEFAULT 'Waiting for evaluation',

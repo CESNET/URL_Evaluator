@@ -34,11 +34,12 @@ def honeynetasia2evaluator():
                 logger.warning(f"Invalid URL '{url}' skipped")
                 continue
             num_inserted += db.execute("""
-                INSERT INTO urls (url, first_seen, last_seen, src) VALUES (?, ?, ?, ?)
+                INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     last_seen = excluded.last_seen,
                     occurrences = urls.occurrences + 1;
-            """, (url, current_date, current_date, "HoneyNet.Asia")).rowcount
+            """, (url, current_date, current_date)).rowcount
+            db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "HoneyNet.Asia"))
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")
 

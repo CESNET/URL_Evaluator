@@ -67,7 +67,7 @@
                 </tr>
                 <tr>
                     <td>Source</td>
-                    <td>{{ url.src }}</td>
+                    <td>{{ url.src | join(', ') }}</td>
                 </tr>
 
                 {% if url.hash %}

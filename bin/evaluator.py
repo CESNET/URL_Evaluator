@@ -103,12 +103,13 @@ def search_for_nested_urls(content, src_url):
 
             # Upsert discovered URL
             db.execute("""
-                INSERT INTO urls (url, first_seen, last_seen, src) VALUES (?, ?, ?, ?)
+                INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     occurrences = urls.occurrences + 1,
                     last_seen = excluded.last_seen;
-            """, (new_url, t_now, t_now, 'URL content'))
-            db.execute("INSERT OR IGNORE INTO url_source (url, src_url) VALUES (?, ?)", (new_url, src_url))
+            """, (new_url, t_now, t_now))
+            db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "URL content"))
+            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (new_url, src_url))
 
             # Insert session and link it to the source URL
             db.execute("INSERT OR IGNORE INTO sessions (session_hash, session) VALUES (?, ?)", (command_id, command))
@@ -312,7 +313,7 @@ if __name__ == "__main__":
 
                 # If the URL was classified as malicious, mark all source URLs that led to it as malicious
                 if result["classification"] == "malicious":
-                    rows = db.execute("SELECT urls.url FROM url_source AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+                    rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
                     if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
                         db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
                         logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
