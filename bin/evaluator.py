@@ -82,7 +82,7 @@ def vt_request(resource_path):
             vt_daily_quota_timestamp = datetime.now(timezone.utc)
             result.update(classification_reason="VT limit exceeded")
         else:
-            logger.warning(f"Unexpected VT status: {e.args[0].status_code}")
+            logger.warning(f"Unexpected response from VirusTotal: {e.args[0].status_code}")
     return result
 
 
@@ -150,10 +150,14 @@ def analyze_content(url):
                 result.update(file_mime_type=file_type)
 
             # check content hash on MalwareBazaar
-            mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1}).json()
-            if mb_resp.get('query_status') == 'ok':
-                result.update(classification="malicious", classification_reason="MB check")
-                return result
+            mb_resp = None
+            try:
+                mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1})
+                if mb_resp.json().get('query_status') == 'ok':
+                    result.update(classification="malicious", classification_reason="MB check")
+                    return result
+            except Exception as e:
+                logger.warning(f"Unexpected response from MalwareBazaar: {mb_resp if mb_resp is not None else e}")
 
             # if not found, check content hash on VirusTotal
             result.update(**vt_request(f"files/{sha1}"))
