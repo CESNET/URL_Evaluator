@@ -19,14 +19,43 @@ from common.db import SQLiteWrapper
 from common.utils import extract_urls
 
 
-def get_source(node_name):
+def get_source_name(event):
     """
-    Returns the first source where the pattern matches node_name, or None if no match is found
+    Get name of the URL source based on Warden source mapping config
+    Returns first source where the event matches any pattern, or None if no match is found
     """
-    for source, pattern in warden_sources.items():
-        if pattern.search(node_name):
+    for source, rules in warden_sources.items():
+        if not rules:
             return source
+        for field_path, pattern in rules.items():
+            if any(pattern.search(val) for val in get_idea_field(event, field_path)):
+                return source
     return None
+
+
+def get_idea_field(event, field_path):
+    """
+    Extract values from the specified IDEA path
+    """
+    keys = field_path.split(".")
+    values = [event]
+    for key in keys:
+        next_values = []
+        for val in values:
+            if isinstance(val, dict) and key in val:
+                next_values.append(val[key])
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and key in item:
+                        next_values.append(item[key])
+        values = next_values
+    flattened = []
+    for val in values:
+        if isinstance(val, list):
+            flattened.extend(str(v) for v in val if isinstance(v, (str, int)))
+        elif isinstance(val, (str, int)):
+            flattened.append(str(val))
+    return flattened
 
 
 def process_attachment(db, commands, idea_id, detected_time, source):
@@ -75,7 +104,7 @@ def receiver():
 
     today = datetime.now(timezone.utc).date()
     while running_flag:
-        if not (events := wclient.getEvents(**wfilter)):
+        if not (events := wclient.getEvents(**config.warden_filter)):
             time.sleep(10)
             continue
         logger.debug("Received %d events", len(events))
@@ -87,7 +116,7 @@ def receiver():
 
         with SQLiteWrapper(config.db_path) as db:
             for event in events:
-                if not (source := get_source(event.get("Node", [{}])[-1].get("Name", ""))):
+                if not (source := get_source_name(event)):
                     continue
                 for attachment in event.get("Attach", []):
                     if "Content" in attachment:
@@ -131,10 +160,11 @@ if __name__ == "__main__":
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
 
-    # Load list of allowed node names
-    warden_sources = dict()
-    for source, pattern in config.warden_sources.items():
-        warden_sources[source] = re.compile(pattern)
+    # Compile patterns for Warden source mapping
+    warden_sources = {
+        source: {field: re.compile(pattern) for field, pattern in rules.items()}
+        for source, rules in config.warden_sources.items()
+    }
 
     # Register signal handlers
     signal.signal(signal.SIGINT, sigint_handler)
@@ -145,7 +175,6 @@ if __name__ == "__main__":
     logger.info("Started")
     running_flag = True
     discovered_today = set()
-    wfilter = {'cat': 'Intrusion.UserCompromise'}
     wclient = Client(**read_cfg(config.warden_config))
     receiver()
     logger.info("Stopped")

@@ -41,12 +41,18 @@ http_proxy: ""
 # Warden client config
 warden_config: "/etc/url_evaluator/warden_client.cfg"
 
-# Warden node-source mapping (dict source -> node name regex)
-# Events that do not match any of the listed nodes will be ignored
+# Warden filter (used by Warden client)
+warden_filter:
+  cat: "Intrusion.UserCompromise"
+
+# Warden source mapping (dict[source -> dict[idea_field -> regex]])
+# Events that do not match any of the listed patterns will be ignored
 warden_sources:
-  "CESNET Hugo": "hugo.*(cowrie|dionaea)"
-  "CZ.NIC HaaS": "cznic_haas"
-  "Warden (unknown node)": ""
+  "CESNET Hugo":
+    "Node.SW": "Cowrie with Warden Filer"
+  "CZ.NIC HaaS":
+    "Node.Name": "cznic_haas"
+  "Warden (unknown node)": {}  # matches everything
 
 # MISP
 misp_url: "!!! CHANGE THIS !!!"
