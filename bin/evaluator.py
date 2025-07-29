@@ -152,7 +152,7 @@ def analyze_content(url):
             # check content hash on MalwareBazaar
             mb_resp = None
             try:
-                mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1})
+                mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1}, headers={'Auth-Key': config.mb_key})
                 if mb_resp.json().get('query_status') == 'ok':
                     result.update(classification="malicious", classification_reason="MB check")
                     return result

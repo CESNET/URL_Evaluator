@@ -75,6 +75,7 @@ urlhaus_key: "!!! CHANGE THIS !!!"
 
 # MalwareBazaar
 mb_url: "https://mb-api.abuse.ch/api/v1/"
+mb_key: "!!! CHANGE THIS !!!"
 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"
