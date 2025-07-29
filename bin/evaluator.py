@@ -28,13 +28,13 @@ def vt_stats_analysis(stats):
 
     if (total := sum(stats.values())):
         if (stats.get('malicious', 0) / total) > config.vt_threshold['malicious']:
-            return 'malicious', 'VT check'
+            return 'malicious'
         if (stats.get('harmless', 0) / total) > config.vt_threshold['harmless']:
-            return 'harmless', 'VT check'
-    return 'unclassified', 'VT inconclusive'
+            return 'harmless'
+    return 'unclassified'
 
 
-def vt_request(resource_path):
+def vt_request(resource_type, resource_id):
     """
     Perform a VirusTotal API request for files or urls and check last analysis stats
     """
@@ -67,9 +67,10 @@ def vt_request(resource_path):
 
     try:
         with virustotal_python.Virustotal(config.vt_key) as vt:
-            attrs = vt.request(resource_path).data.get('attributes', {})
+            attrs = vt.request(f'{resource_type.lower()}s/{resource_id}').data.get('attributes', {})
             if last_stats := attrs.get('last_analysis_stats'):
-                cls, reason = vt_stats_analysis(last_stats)
+                cls = vt_stats_analysis(last_stats)
+                reason = f'VT {resource_type} check' if cls != 'unclassified' else f'VT {resource_type} check inconclusive'
                 result.update(classification=cls, classification_reason=reason, vt_stats=json.dumps(last_stats))
                 if cls == 'malicious' and (threat := attrs.get('popular_threat_classification', {}).get('suggested_threat_label')):
                     result.update(threat_label=threat)
@@ -154,13 +155,13 @@ def analyze_content(url):
             try:
                 mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1}, headers={'Auth-Key': config.mb_key})
                 if mb_resp.json().get('query_status') == 'ok':
-                    result.update(classification="malicious", classification_reason="MB check")
+                    result.update(classification="malicious", classification_reason="MB file check")
                     return result
             except Exception as e:
                 logger.warning(f"Unexpected response from MalwareBazaar: {mb_resp if mb_resp is not None else e}")
 
             # if not found, check content hash on VirusTotal
-            result.update(**vt_request(f"files/{sha1}"))
+            result.update(**vt_request("file", sha1))
             return result
 
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
@@ -219,7 +220,7 @@ def evaluate_url(url):
 
     logger.debug("Checking VirusTotal")
     url_id = urlsafe_b64encode(url.encode()).decode().strip("=")
-    result.update(**vt_request(f"urls/{url_id}"))
+    result.update(**vt_request("URL", url_id))
     if result.get("classification") != "unclassified":
         return result
 
