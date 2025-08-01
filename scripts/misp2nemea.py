@@ -55,7 +55,7 @@ for event in events:
             misp_url_list.add(attribute["value"])
 
     for obj in event["Event"]["Object"]:
-        if obj["name"] == "url-honeypot-discovery":
+        if obj["name"] == "url-honeypot-detection":
             for attr in obj["Attribute"]:
                 if attr["type"] == "url" and attr["to_ids"] == True:
                     misp_url_list.add(attr["value"])

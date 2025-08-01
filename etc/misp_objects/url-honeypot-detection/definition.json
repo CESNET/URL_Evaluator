@@ -1,7 +1,7 @@
 {
     "description": "An object to record information regarding a malicious URL identified through honeypot activity.",
     "meta-category": "Payload delivery",
-    "name": "url-honeypot-discovery",
+    "name": "url-honeypot-detection",
     "required": [
         "url",
         "first-seen"

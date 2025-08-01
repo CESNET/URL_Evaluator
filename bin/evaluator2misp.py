@@ -60,7 +60,7 @@ def evaluator2misp():
         status = row[5]
         classification = row[6]
 
-        new_object = MISPObject("url-honeypot-discovery", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
+        new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
         if status == "active":
             url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=True, Attribute={"type": "url", "value": url})
         else:
@@ -121,7 +121,7 @@ def update_ids_flags(db):
             if len(event.Object) != 0:
                 for i in range(len(event.Object)):
                     obj = event.Object[i]
-                    if obj.name == "url-honeypot-discovery":
+                    if obj.name == "url-honeypot-detection":
                         for j in range(len(obj.Attribute)):
                             attr = obj.Attribute[j]
                             if (attr.type == "url" and attr.value == row[0]):
