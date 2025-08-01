@@ -6,6 +6,7 @@ import os
 import sys
 import argparse
 import logging
+import base64
 
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, make_response, redirect, url_for
@@ -53,14 +54,14 @@ app.secret_key = config.flask_secret_key
 
 
 def get_urlhaus_link(url):
-    response = requests.post(config.urlhaus_detail_url, {'url': url})
     try:
+        response = requests.post(config.urlhaus_detail_url, {'url': url})
         json_response = response.json()
-    except (ValueError, requests.exceptions.RequestException):
-        return None
-    if json_response['query_status'] == 'ok':
-        return json_response['urlhaus_reference']
-    else:
+        if json_response['query_status'] == 'ok':
+            return json_response['urlhaus_reference']
+        else:
+            return None
+    except Exception:
         return None
 
 
@@ -277,8 +278,11 @@ def detail():
     reason_link = None
     if url_detail.reason == "Blacklist check":
         reason_link = get_urlhaus_link(url)
-    elif "VT" in url_detail.reason:
+    elif "VT file check" in url_detail.reason:
         reason_link = f"https://www.virustotal.com/gui/file/{url_detail.hash}"
+    elif "VT URL check" in url_detail.reason:
+        encoded_url = base64.urlsafe_b64encode(url_detail.url.encode()).decode().rstrip("=")
+        reason_link = f"https://www.virustotal.com/gui/url/{encoded_url}"
 
     # get link for misp if reported
     misp_link = get_misp_link(url_detail)
@@ -380,6 +384,6 @@ def api_url_stats():
         "file_mime_type": url_detail[0][11],
         "content_size": url_detail[0][12],
         "threat_label": url_detail[0][13],
-        "src": ", ".join(url_sources),
+        "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
