@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BlockingScheduler
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid
+from common.utils import is_valid, get_domain
 
 
 def honeynetasia2evaluator():
@@ -34,11 +34,11 @@ def honeynetasia2evaluator():
                 logger.warning(f"Invalid URL '{url}' skipped")
                 continue
             num_inserted += db.execute("""
-                INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
+                INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     last_seen = excluded.last_seen,
                     occurrences = urls.occurrences + 1;
-            """, (url, current_date, current_date)).rowcount
+            """, (url, current_date, current_date, get_domain(url))).rowcount
             db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "HoneyNet.Asia"))
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")

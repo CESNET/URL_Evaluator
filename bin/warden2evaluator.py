@@ -5,18 +5,15 @@ import sys
 import os
 import argparse
 import logging
-import hashlib
 import time
 import regex as re
-from collections import Counter
-from datetime import datetime, timezone
 from warden_client import Client, Error, read_cfg
 
 # Add to path the "one directory above the current file location" to find modules from "common"
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import extract_urls
+from common.utils import process_new_session
 
 
 def get_source_name(event):
@@ -58,61 +55,16 @@ def get_idea_field(event, field_path):
     return flattened
 
 
-def process_attachment(db, commands, idea_id, detected_time, source):
-    """
-    Extract URLs from shell commands executed during a honeypot session and save them to database
-    """
-
-    global discovered_today
-    session_hash = hashlib.md5(commands.encode()).hexdigest()
-
-    if not any(tool in commands for tool in ("curl", "wget")):
-        return
-
-    db.execute(
-        """
-        INSERT INTO sessions (session_hash, session, idea_id) VALUES (?, ?, ?)
-        ON CONFLICT(session_hash) DO UPDATE SET idea_id = excluded.idea_id;
-        """, (session_hash, commands, idea_id)
-    )
-
-    for url, cnt in Counter(extract_urls(commands)).items():
-        db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
-
-        if url in discovered_today:
-            logger.debug(f"URL already discovered: {url}")
-            continue
-        discovered_today.add(url)
-
-        logger.info(f"Discovered new URL: {url}")
-        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
-        db.execute(
-            """
-            INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET
-                occurrences = occurrences + 1,
-                last_seen = excluded.last_seen;
-            """, (url, detected_time, detected_time),)
-
-        if cnt >= 10:
-            db.execute("UPDATE urls SET evaluated = 'yes', classification = 'harmless', classification_reason = 'DDoS target' WHERE url = ?", (url,))
-
 def receiver():
     """
     Receive messages from Warden
     """
 
-    today = datetime.now(timezone.utc).date()
     while running_flag:
         if not (events := wclient.getEvents(**config.warden_filter)):
             time.sleep(10)
             continue
         logger.debug("Received %d events", len(events))
-
-        if today != datetime.now(timezone.utc).date():
-            global discovered_today
-            discovered_today = set()
-            today = datetime.now(timezone.utc).date()
 
         with SQLiteWrapper(config.db_path) as db:
             for event in events:
@@ -120,15 +72,14 @@ def receiver():
                     continue
                 for attachment in event.get("Attach", []):
                     if "Content" in attachment:
-                        detect_time = event.get("DetectTime")
-                        detect_time = detect_time.split("T")[0]
                         content = attachment["Content"]
                         if re.match("^\[(\'|\")(\r\n|\r|\n|.)*(\'|\")\]$", content):
                             content = content[2:-2]  # Unwrap
                         logger.debug(f"Looking for new URLs in '{content}'")
 
                         # Search for new URLs
-                        process_attachment(db, content, event.get("ID"), detect_time, source)
+                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), source, None):
+                            logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
 
 
 def sigint_handler(signum, frame):
@@ -174,7 +125,6 @@ if __name__ == "__main__":
     # Run Warden client
     logger.info("Started")
     running_flag = True
-    discovered_today = set()
     wclient = Client(**read_cfg(config.warden_config))
     receiver()
     logger.info("Stopped")

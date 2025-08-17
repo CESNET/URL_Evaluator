@@ -52,5 +52,6 @@ CREATE TABLE urls
     last_active           DATE,
     status_changed        TEXT DEFAULT 'no' CHECK (status_changed IN ('yes', 'no')),
     last_edit             TEXT,
-    eval_later            TEXT DEFAULT 'no' CHECK (eval_later IN ('yes', 'no'))
+    eval_later            TEXT DEFAULT 'no' CHECK (eval_later IN ('yes', 'no')),
+    domain                TEXT
 );

@@ -34,6 +34,12 @@ max_file_size: 100 # MB
 # How often should evaluation blacklist be updated
 bl_update_time: 15 # minutes
 
+# Threshold values for DDoS detection
+ddos_threshold:
+  same_url_single_session: 10
+  same_domain_single_session: 100
+  same_domain_all_sessions: 500
+
 # HTTP proxy used for connections to suspicious URLs
 # Keep empty if you aren't using a proxy
 http_proxy: ""

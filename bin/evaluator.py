@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, extract_urls, extract_commands
+from common.utils import is_valid, extract_commands, process_new_session
 
 
 def vt_stats_analysis(stats):
@@ -94,27 +94,11 @@ def search_for_nested_urls(content, src_url):
 
     try:
         decoded_content = content.decode("utf-8")
+        if session := extract_commands(decoded_content):
+            if new_urls := process_new_session(db, config, session, None, datetime.now(timezone.utc).isoformat(), "URL content", src_url):
+                logger.info(f"{len(new_urls)} new URLs found in a shell script downloaded from {src_url}: {new_urls}")
     except UnicodeDecodeError:
-        decoded_content = ""
-    for command in extract_commands(decoded_content):
-        for new_url in extract_urls(command):
-            logger.debug(f"New URL {new_url} found in a shell script downloaded from {src_url}")
-            t_now = datetime.now(timezone.utc).date()
-            command_id = hashlib.md5(command.encode()).hexdigest()
-
-            # Upsert discovered URL
-            db.execute("""
-                INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)
-                ON CONFLICT(url) DO UPDATE SET
-                    occurrences = urls.occurrences + 1,
-                    last_seen = excluded.last_seen;
-            """, (new_url, t_now, t_now))
-            db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "URL content"))
-            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (new_url, src_url))
-
-            # Insert session and link it to the source URL
-            db.execute("INSERT OR IGNORE INTO sessions (session_hash, session) VALUES (?, ?)", (command_id, command))
-            db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, command_id))
+        return
 
 
 def analyze_content(url):
@@ -195,6 +179,21 @@ def is_blacklisted(url):
     return False
 
 
+def check_domain_threshold(url):
+    """
+    Check the total number of URLs from the same domain
+    If a threshold is exceeded all non-malicious URLs from the domain will be deleted (probably a DDoS attack)
+    """
+
+    domain = db.execute("SELECT domain FROM urls WHERE url=?", (url,)).fetchone()[0]
+    urls_from_domain = tuple(u[0] for u in db.execute("SELECT url FROM urls WHERE domain=?", (domain,)).fetchall())
+    if len(urls_from_domain) > config.ddos_threshold["same_domain_all_sessions"]:
+        db.execute(f"DELETE FROM urls WHERE url IN {urls_from_domain} AND classification != 'malicious'")
+        logger.info(f"Deleted {len(urls_from_domain)} URLs from domain {domain} (global threshold exceeded)")
+        logger.debug(f"Deleted URLs: {urls_from_domain}")
+        return True
+
+
 def evaluate_url(url):
     """
     1. Check that the URL is valid
@@ -208,9 +207,16 @@ def evaluate_url(url):
 
     result = dict(evaluated="yes", eval_later="no")
 
+    logger.debug("Checking validity")
     if not is_valid(url):
         result.update(classification="invalid", classification_reason="Invalid format")
         return result
+    logger.debug("OK")
+
+    logger.debug("Checking domain threshold")
+    if check_domain_threshold(url):
+        return None
+    logger.debug("OK")
 
     logger.debug("Checking evaluation blacklist")
     if is_blacklisted(url):
@@ -289,41 +295,39 @@ if __name__ == "__main__":
     blacklist = []
     bl_last_updated = None
 
+    # Open DB connection
+    db = SQLiteWrapper(config.db_path)
+
     logger.info("Started")
     running_flag = True
     while running_flag:
-        logger.debug("Loading URLs")
-        db = SQLiteWrapper(config.db_path)
-        urls = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "")).fetchall()
-        if not urls:
+        url = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
+        if not url:
             logger.debug("No URLs to check, sleeping for 10 seconds")
             time.sleep(10)
             continue
-        logger.info(f"Loaded {len(urls)} URLs, starting evaluation...")
+        url = url[0]
 
-        for (url,) in urls:
-            if not running_flag:
-                break
-            try:
-                # Evaluate URL
-                logger.debug(f"Evaluating {url}")
-                result = evaluate_url(url)
-                logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
+        try:
+            logger.debug(f"Evaluating {url}")
+            if not (result := evaluate_url(url)):
+                continue
+            logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
 
-                # Update DB record
-                items = list(result.items())
-                set_clause = ", ".join([f"{k} = ?" for k, _ in items])
-                params = tuple(v for _, v in items) + (url,)
-                db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
+            # Update DB record
+            items = list(result.items())
+            set_clause = ", ".join([f"{k} = ?" for k, _ in items])
+            params = tuple(v for _, v in items) + (url,)
+            db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
 
-                # If the URL was classified as malicious, mark all source URLs that led to it as malicious
-                if result["classification"] == "malicious":
-                    rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-                    if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
-                        db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
-                        logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
-            except Exception as e:
-                logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
-        logger.info("Done")
-        db.close()
+            # If the URL was classified as malicious, mark all source URLs that led to it as malicious
+            if result["classification"] == "malicious":
+                rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+                if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
+                    db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+                    logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
+        except Exception as e:
+            logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
+
+    db.close()
     logger.info("Stopped")

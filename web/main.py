@@ -17,7 +17,7 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid
+from common.utils import is_valid, get_domain
 
 # Global variables
 page = 1
@@ -185,7 +185,7 @@ def list_all():
                     t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
                     if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen) VALUES (?, ?, ?)", (add_url, t_now, t_now))
+                        db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
                         db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
                         adding = "success"
                     else:
