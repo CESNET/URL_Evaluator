@@ -7,11 +7,21 @@
         "first-seen"
     ],
     "uuid": "053aa75b-5fdb-4f5e-8cf8-3969d46f6d19",
-    "version": 2,
+    "version": 3,
     "attributes": {
         "url": {
             "description": "Full URL",
             "misp-attribute": "url",
+            "ui-priority": 6
+        },
+        "ip-dst|port": {
+            "description": "Extracted IP and port",
+            "misp-attribute": "ip-dst|port",
+            "ui-priority": 5
+        },
+        "domain": {
+            "description": "Extracted domain",
+            "misp-attribute": "domain",
             "ui-priority": 4
         },
         "first-seen": {

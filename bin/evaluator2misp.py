@@ -5,6 +5,8 @@ import sys
 import os
 import argparse
 import signal
+import ipaddress
+from urllib.parse import urlparse
 from pymisp import ExpandedPyMISP, MISPEvent, MISPAttribute, MISPObject, PyMISP
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.background import BlockingScheduler
@@ -14,13 +16,44 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 
+# Disable insecure certificate warnings
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def extract_ip_domain_port(url):
+    """
+    Extract domain name or IP address and dest. port from given URL
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None, None
+    scheme = parsed.scheme
+    hostname = parsed.hostname
+    port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        ipaddress.ip_address(hostname)
+        if ":" in hostname:
+            hostname = f"[{hostname}]"  # wrap ipv6 in square brackets
+        return f"{hostname}:{port}", None
+    except ValueError:
+        return None, hostname
+
 
 def evaluator2misp():
     logger.info("Job started")
-
-    # Init DB connection
     db = SQLiteWrapper(config.db_path)
 
+    push_new_urls(db)
+    update_ids_flags(db)
+    add_yesterdays_sightings(db)
+
+    db.close()
+    logger.info("Job finished")
+
+
+def push_new_urls(db):
     # Load malicious URLs that have not been reported to MISP yet
     filter = "reported = 'no' and (classification = 'malicious' or classification = 'miner')"
     rows = db.execute(f"SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE {filter}").fetchall()
@@ -59,6 +92,7 @@ def evaluator2misp():
         threat_label = row[4]
         status = row[5]
         classification = row[6]
+        ip, domain = extract_ip_domain_port(url)
 
         new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
         if status == "active":
@@ -76,6 +110,10 @@ def evaluator2misp():
             new_object.add_attribute(object_relation="mime-type", simple_value=file_mime_type, Attribute={"type": "mime-type", "value": file_mime_type})
         if threat_label:
             new_object.add_attribute(object_relation="malware-family", simple_value=threat_label, Attribute={"type": "text", "value": threat_label})
+        if ip:
+            new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=True, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": True})
+        elif domain:
+            new_object.add_attribute(object_relation="domain", simple_value=domain, to_ids=False, Attribute={"type": "domain", "value": domain, "to_ids": False})
         misp.add_object(event=event, misp_object=new_object)
 
         sighting = {"value": url, "timestamp": first_seen}
@@ -89,15 +127,6 @@ def evaluator2misp():
     logger.debug("Updating DB records")
     db.execute(f"UPDATE urls SET reported = 'yes' WHERE {filter}")
     logger.debug("Done")
-
-    # Update activity status (to_ids flag) of URLs whose activity status has changed
-    update_ids_flags(db)
-
-    # Add sightings for URLs that were seen yesterday
-    add_yesterdays_sightings(db)
-
-    db.close()
-    logger.info("Job finished")
 
 
 def update_ids_flags(db):
@@ -137,7 +166,11 @@ def update_ids_flags(db):
                             event.Attribute[i].to_ids = True
                         else:
                             event.Attribute[i].to_ids = False
-            misp.update_event(event)
+
+            try:
+                misp.update_event(event)
+            except Exception as err:
+                logger.warning(f"Couldn't update event {e.id}: {err}")
 
     # Update DB records
     logger.debug("Updating DB records")
@@ -157,7 +190,10 @@ def add_yesterdays_sightings(db):
     # Add sightings to MISP
     logger.info("Adding new sightings")
     for row in rows:
-        misp.add_sighting({"value": row[0]})
+        try:
+            misp.add_sighting({"value": row[0]})
+        except Exception as err:
+            logger.warning(f"Couldn't add sighting for {row[0]}: {err}")
     logger.debug("Done")
 
 
