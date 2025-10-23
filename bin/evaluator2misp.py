@@ -34,9 +34,7 @@ def extract_ip_domain_port(url):
     port = parsed.port or (443 if scheme == "https" else 80)
     try:
         ipaddress.ip_address(hostname)
-        if ":" in hostname:
-            hostname = f"[{hostname}]"  # wrap ipv6 in square brackets
-        return f"{hostname}:{port}", None
+        return f"{hostname}|{port}", None
     except ValueError:
         return None, hostname
 
