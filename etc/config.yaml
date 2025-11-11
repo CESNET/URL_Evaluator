@@ -10,6 +10,9 @@ scheduler:
   honeynetasia2evaluator:
     hour: 12
     minute: 0
+  tpot2evaluator:
+    hour: 12
+    minute: 2
   activity_scanner:
     hour: 12
     minute: 5
@@ -85,6 +88,10 @@ mb_key: "!!! CHANGE THIS !!!"
 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"
+
+# T-Pot
+tpot_url: "https://castor.security.psnc.pl/urls/long?days=1"
+tpot_key: "!!! CHANGE THIS !!!"
 
 # URL of Evaluator root (without trailing slash, e.g. "/url_evaluator")
 # All evaluator pages are relative to this
