@@ -65,7 +65,11 @@ def get_domain(url: str):
     """
     Get URL netloc (domain/IP and port)
     """
-    return urlparse(url).netloc or None
+    try:
+        return urlparse(url).netloc or None
+    except ValueError as e:
+        logger.warning(f"Skipping malformed URL: {url}")
+        return None
 
 
 def process_new_session(db, config, session, idea_id, detect_time, source, source_url):
