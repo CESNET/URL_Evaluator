@@ -7,7 +7,7 @@ import argparse
 import signal
 import ipaddress
 from urllib.parse import urlparse
-from pymisp import ExpandedPyMISP, MISPEvent, MISPAttribute, MISPObject, PyMISP
+from pymisp import PyMISP, MISPEvent, MISPAttribute, MISPObject
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.background import BlockingScheduler
 
@@ -39,144 +39,138 @@ def extract_ip_domain_port(url):
         return None, hostname
 
 
-def evaluator2misp():
-    logger.info("Job started")
-    db = SQLiteWrapper(config.db_path)
-
-    push_new_urls(db)
-    update_ids_flags(db)
-    add_yesterdays_sightings(db)
-
-    db.close()
-    logger.info("Job finished")
-
-
-def push_new_urls(db):
-    # Load malicious URLs that have not been reported to MISP yet
-    filter = "reported = 'no' and (classification = 'malicious' or classification = 'miner')"
-    rows = db.execute(f"SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE {filter}").fetchall()
-    if not rows:
-        logger.info("No new malicious URLs")
-        return
-    logger.info(f"Found {len(rows)} new malicious URLs")
-
-    # Create new event
+def get_or_create_event(misp):
+    """
+    Fetch existing MISP event or create a new one if it doesn't exist yet
+    """
+    event_info = "Malicious URLs from SSH honeypots"
+    event_tags = [
+        'tlp:clear',
+        'coa:discover=honeypot',
+        'rsit:malicious-code="malware-distribution"',
+        'CESNET:malware-urls'
+    ]
+    if existing := misp.search(eventinfo=event_info, event_tags=event_tags, pythonify=True):
+        logger.debug(f"Using existing event (ID {existing[0].id})")
+        return misp.get_event(existing[0].id, pythonify=True)
     event = MISPEvent()
-    event.add_tag("tlp:clear")
-    event.add_tag("coa:discover=honeypot")
-    event.add_tag('rsit:malicious-code="malware-distribution"')
-    event.add_tag('CESNET:malware-urls')
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    event.info = f"Malicious URLs from SSH honeypots [{date}]"
-    event.date = date
+    event.info = event_info
+    for tag in event_tags:
+        event.add_tag(tag)
+    event.date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     event.distribution = 3
     event.threat_level_id = 3
     event.analysis = 2
-    result = misp.add_event(event)
-    if result and 'errors' not in result:
-        event_id = result.get('Event').get('id')
-    else:
-        logger.error(f"Error while creating new event: {result}")
-        return
-    logger.debug(f"Successfully created event with ID: {event_id}")
-
-    # Create objects
-    logger.info("Creating URL objects")
-    for row in rows:
-        url = row[0]
-        hash = row[1]
-        first_seen = row[2]
-        file_mime_type = row[3]
-        threat_label = row[4]
-        status = row[5]
-        classification = row[6]
-        ip, domain = extract_ip_domain_port(url)
-
-        new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
-        if status == "active":
-            url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=True, Attribute={"type": "url", "value": url})
-        else:
-            url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=False, Attribute={"type": "url", "value": url, "to_ids": False})
-        if classification == "malicious":
-            url_attr.add_tag('rsit:malicious-code="malware-distribution"')
-        elif classification == "miner":
-            url_attr.add_tag('sentinel-threattype:CryptoMining')
-        new_object.add_attribute(object_relation="first-seen", simple_value=first_seen, Attribute={"type": "datetime", "value": first_seen})
-        if hash:
-            new_object.add_attribute(object_relation="hash", simple_value=hash, Attribute={"type": "sha1", "value": hash})
-        if file_mime_type:
-            new_object.add_attribute(object_relation="mime-type", simple_value=file_mime_type, Attribute={"type": "mime-type", "value": file_mime_type})
-        if threat_label:
-            new_object.add_attribute(object_relation="malware-family", simple_value=threat_label, Attribute={"type": "text", "value": threat_label})
-        if ip:
-            new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=True, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": True})
-        elif domain:
-            new_object.add_attribute(object_relation="domain", simple_value=domain, to_ids=False, Attribute={"type": "domain", "value": domain, "to_ids": False})
-        misp.add_object(event=event, misp_object=new_object)
-
-        sighting = {"value": url, "timestamp": first_seen}
-        misp.add_sighting(sighting)
-
-    # Publish the event
-    logger.debug("Publishing the new event")
-    misp.publish(event_id, alert=True)
-
-    # Update DB records
-    logger.debug("Updating DB records")
-    db.execute(f"UPDATE urls SET reported = 'yes' WHERE {filter}")
-    logger.debug("Done")
+    new = misp.add_event(event, pythonify=True)
+    logger.debug(f"Created new event (ID {new.id})")
+    return new
 
 
-def update_ids_flags(db):
-    # Load URLs whose activity status has changed
-    filter = "status_changed = 'yes' and (classification = 'malicious' or classification = 'miner')"
-    rows = db.execute(f"SELECT url, status  FROM urls WHERE {filter}").fetchall()
+def create_object(db_row):
+    """
+    Create new MISP object from a DB row
+    """
+    url = db_row[0]
+    hash = db_row[1]
+    first_seen = db_row[2]
+    file_mime_type = db_row[3]
+    threat_label = db_row[4]
+    status = db_row[5]
+    classification = db_row[6]
+    ip, domain = extract_ip_domain_port(url)
+
+    new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
+
+    # Add URL and set 'to_ids' based on current activity status
+    to_ids = True if status == "active" else False
+    url_attr = new_object.add_attribute(object_relation="url", simple_value=url, to_ids=to_ids, Attribute={"type": "url", "value": url, "to_ids": to_ids})
+
+    # Add tags to URL attribute
+    if classification == "malicious":
+        url_attr.add_tag('rsit:malicious-code="malware-distribution"')
+    elif classification == "miner":
+        url_attr.add_tag('sentinel-threattype:CryptoMining')
+
+    # Add first-seen timestamp
+    new_object.add_attribute(object_relation="first-seen", simple_value=first_seen, Attribute={"type": "datetime", "value": first_seen})
+
+    # Add file hash if present
+    if hash:
+        new_object.add_attribute(object_relation="hash", simple_value=hash, Attribute={"type": "sha1", "value": hash})
+
+    # Add file type if present
+    if file_mime_type:
+        new_object.add_attribute(object_relation="mime-type", simple_value=file_mime_type, Attribute={"type": "mime-type", "value": file_mime_type})
+
+    # Add threat label if present
+    if threat_label:
+        new_object.add_attribute(object_relation="malware-family", simple_value=threat_label, Attribute={"type": "text", "value": threat_label})
+
+    # Add extracted IP or domain
+    if ip:
+        new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=True, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": True})
+    elif domain:
+        new_object.add_attribute(object_relation="domain", simple_value=domain, to_ids=False, Attribute={"type": "domain", "value": domain, "to_ids": False})
+    return new_object
+
+
+def sync_urls(misp, db):
+    """
+    Sync MISP event with Evaluator DB:
+      - add new malicious URLs
+      - update 'to_ids' flags based on URL activity
+      - delete outdated records
+    """
+
+    # Load all malicious/miner URLs from the DB
+    rows = db.execute(f"SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE classification = 'malicious' or classification = 'miner'").fetchall()
     if not rows:
-        logger.info("Found no malicious URLs with changed status")
+        logger.info("No malicious URLs")
         return
-    logger.info(f"Found {len(rows)} malicious URLs with changed status")
+    db_urls = {row[0]: row for row in rows}
+    logger.info(f"Found {len(db_urls)} malicious URLs, updating MISP objects...")
 
-    # Update attributes
-    logger.info("Updating MISP attributes")
-    for row in rows:
-        events = misp.search(value=row[0], type_attribute='url', pythonify=True)
-        for e in events:
-            event = misp.get_event(e.id, pythonify=True)
-            if type(event) is not MISPEvent:
-                logger.warning(f"Couldn't find event for URL {row[0]}")
-                continue
-            if len(event.Object) != 0:
-                for i in range(len(event.Object)):
-                    obj = event.Object[i]
-                    if obj.name == "url-honeypot-detection":
-                        for j in range(len(obj.Attribute)):
-                            attr = obj.Attribute[j]
-                            if (attr.type == "url" and attr.value == row[0]):
-                                if row[1] == "active":
-                                    event.Object[i].Attribute[j].to_ids = True
-                                else:
-                                    event.Object[i].Attribute[j].to_ids = False
-            elif len(event.Attribute) != 0:
-                for i in range(len(event.Attribute)):
-                    attr = event.Attribute[i]
-                    if (attr.value == row[0]):
-                        if row[1] == "active":
-                            event.Attribute[i].to_ids = True
-                        else:
-                            event.Attribute[i].to_ids = False
+    # Fetch MISP event
+    event = get_or_create_event(misp)
+    modified = False
 
-            try:
-                misp.update_event(event)
-            except Exception as err:
-                logger.warning(f"Couldn't update event {e.id}: {err}")
+    # Fetch all URLs currently in MISP
+    misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in event.objects]
 
-    # Update DB records
-    logger.debug("Updating DB records")
-    db.execute(f"UPDATE urls SET status_changed = 'no' WHERE {filter}")
-    logger.debug("Done")
+    # Add new URLs
+    for url, db_row in db_urls.items():
+        if url not in misp_urls:
+            logger.debug(f"Adding new URL: {url}")
+            event.add_object(create_object(db_row))
+            modified = True
+
+    # Update existing URLs
+    for obj in event.objects:
+        url = obj.get_attributes_by_relation("url")[0]
+        if url.value in db_urls:
+            if (url.to_ids is False and db_urls[url.value][5] == 'active') or \
+               (url.to_ids is True and db_urls[url.value][5] != 'active'):
+                # URL status has changed, modify 'to_ids' flag
+                logger.debug(f"Updating IDS flag for URL: {url.value} ({url.to_ids} -> {not url.to_ids})")
+                url.to_ids = True if db_urls[url.value][5] == 'active' else False
+                modified = True
+        else:
+            # URL was deleted, remove it from MISP too
+            logger.debug(f"Deleting old URL: {url}")
+            event.delete_object(obj.id)
+            modified = True
+
+    # Commit changes
+    if modified:
+        event = misp.update_event(event, pythonify=True)
+        misp.publish(event.id, alert=False)
 
 
-def add_yesterdays_sightings(db):
+def add_yesterdays_sightings(misp, db):
+    """
+    Add sightings to URLS that were last seen yesterday
+    """
+
     # Load URLs that were seen yesterday
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
     rows = db.execute("SELECT url FROM urls WHERE last_seen=? AND (classification='malicious' OR classification='miner')", (yesterday,)).fetchall()
@@ -188,11 +182,37 @@ def add_yesterdays_sightings(db):
     # Add sightings to MISP
     logger.info("Adding new sightings")
     for row in rows:
-        try:
-            misp.add_sighting({"value": row[0]})
-        except Exception as err:
-            logger.warning(f"Couldn't add sighting for {row[0]}: {err}")
+        misp.add_sighting({"value": row[0]})
     logger.debug("Done")
+
+
+def evaluator2misp():
+    logger.info("Job started")
+    db = SQLiteWrapper(config.db_path)
+
+    try:
+        logger.debug(f"Connecting to MISP at {config.misp_url}")
+        misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert, debug=False)
+    except Exception as e:
+        logger.error(f"Error while connecting to MISP: {type(e).__name__}: {e}")
+        sys.exit(1)
+
+    try:
+        sync_urls(misp, db)
+    except Exception as e:
+        logger.exception(f"Failed to sync data with MISP: {type(e).__name__}: {e}")
+        db.close()
+        sys.exit(2)
+
+    try:
+        add_yesterdays_sightings(misp, db)
+    except Exception as e:
+        logger.exception(f"Failed to add new sightings: {type(e).__name__}: {e}")
+        db.close()
+        sys.exit(3)
+
+    db.close()
+    logger.info("Job finished")
 
 
 def sigint_handler(signum, frame):
@@ -223,14 +243,6 @@ if __name__ == '__main__':
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
-
-    # Connect to MISP
-    try:
-        logger.debug(f"Connecting to MISP at {config.misp_url}")
-        misp = ExpandedPyMISP(config.misp_url, config.misp_key, config.misp_verify_cert, debug=False)
-    except Exception as e:
-        logger.error(f"Error while connecting to MISP: {e}")
-        sys.exit(2)
 
     # Register signal handlers
     signal.signal(signal.SIGINT, sigint_handler)
