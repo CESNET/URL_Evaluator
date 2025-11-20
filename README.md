@@ -9,7 +9,7 @@ Currently we are processing data from:
 * [CESNET Hugo](https://hugo.cesnet.cz/en/index)
 * [CZ.NIC HaaS ](https://haas.nic.cz/)
 * [HoneyNet Asia](https://blog.apnic.net/2019/09/17/the-apnic-community-honeynet-project/)
-* T-Pot (an internal activity of GN5-2 project)
+* GEANT T-Pot (an internal activity of GN5-2 project)
 
 Firstly, data is sent to the system by one of the input modules and stored into a database.
 After processing incoming data, the next step is to analyze and classify extracted URLs.
@@ -47,7 +47,7 @@ URL Evaluator is composed of several components:
 * Inputs
   * `warden2evaluator` - receives data from CESNET Hugo and CZ.NIC HaaS
   * `honeynetasia2evaluator` - receives data from HoneyNet Asia
-  * `tpot2evaluator` - receives data from T-Pot
+  * `tpot2evaluator` - receives data from GEANT T-Pot
 * Data processing
   * `activity_scanner` - periodically updates activity status of stored URLs
   * `db_cleaner` - deletes old records from the DB
