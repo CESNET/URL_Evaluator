@@ -73,10 +73,12 @@ def create_object(db_row):
     url = db_row[0]
     hash = db_row[1]
     first_seen = db_row[2]
-    file_mime_type = db_row[3]
-    threat_label = db_row[4]
-    status = db_row[5]
-    classification = db_row[6]
+    last_seen = db_row[3]
+    file_mime_type = db_row[4]
+    threat_label = db_row[5]
+    status = db_row[6]
+    classification = db_row[7]
+    source = db_row[8]
     ip, domain = extract_ip_domain_port(url)
 
     new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
@@ -91,8 +93,9 @@ def create_object(db_row):
     elif classification == "miner":
         url_attr.add_tag('sentinel-threattype:CryptoMining')
 
-    # Add first-seen timestamp
+    # Add timestamps
     new_object.add_attribute(object_relation="first-seen", simple_value=first_seen, Attribute={"type": "datetime", "value": first_seen})
+    new_object.add_attribute(object_relation="last-seen", simple_value=last_seen, Attribute={"type": "datetime", "value": last_seen})
 
     # Add file hash if present
     if hash:
@@ -111,6 +114,11 @@ def create_object(db_row):
         new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=True, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": True})
     elif domain:
         new_object.add_attribute(object_relation="domain", simple_value=domain, to_ids=False, Attribute={"type": "domain", "value": domain, "to_ids": False})
+
+    # Add source
+    if source:
+        new_object.add_attribute(object_relation="source", simple_value=source, Attribute={"type": "text", "value": source, "distribution": '2'})
+
     return new_object
 
 
@@ -123,7 +131,22 @@ def sync_urls(misp, db):
     """
 
     # Load all malicious/miner URLs from the DB
-    rows = db.execute(f"SELECT url, hash, first_seen, file_mime_type, threat_label, status, classification FROM urls WHERE classification = 'malicious' or classification = 'miner'").fetchall()
+    rows = db.execute("""
+    SELECT
+        u.url,
+        u.hash,
+        u.first_seen,
+        u.last_seen,
+        u.file_mime_type,
+        u.threat_label,
+        u.status,
+        u.classification,
+        COALESCE(GROUP_CONCAT(us.source, ', '), 'Unknown')
+    FROM urls u
+    LEFT JOIN url_source us ON us.url = u.url
+    WHERE u.classification IN ('malicious', 'miner')
+    GROUP BY u.url;
+    """).fetchall()
     if not rows:
         logger.info("No malicious URLs")
         return
@@ -147,12 +170,24 @@ def sync_urls(misp, db):
     # Update existing URLs
     for obj in event.objects:
         url = obj.get_attributes_by_relation("url")[0]
+        last_seen = obj.get_attributes_by_relation("last-seen")[0]
+        source = obj.get_attributes_by_relation("source")[0]
         if url.value in db_urls:
-            if (url.to_ids is False and db_urls[url.value][5] == 'active') or \
-               (url.to_ids is True and db_urls[url.value][5] != 'active'):
+            if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
+               (url.to_ids is True and db_urls[url.value][6] != 'active'):
                 # URL status has changed, modify 'to_ids' flag
-                logger.debug(f"Updating IDS flag for URL: {url.value} ({url.to_ids} -> {not url.to_ids})")
-                url.to_ids = True if db_urls[url.value][5] == 'active' else False
+                logger.debug(f"Updating IDS flag for '{url.value}'")
+                url.to_ids = True if db_urls[url.value][6] == 'active' else False
+                modified = True
+            if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
+                # Last seen timestamp is outdated
+                logger.debug(f"Updating last-seen for '{url.value}'")
+                last_seen.value = db_urls[url.value][3]
+                modified = True
+            if source.value != db_urls[url.value][8]:
+                # New source(s) reported the URL
+                logger.debug(f"Updating source for '{url.value}'")
+                last_seen.value = db_urls[url.value][8]
                 modified = True
         else:
             # URL was deleted, remove it from MISP too

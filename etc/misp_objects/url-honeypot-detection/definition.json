@@ -7,7 +7,7 @@
         "first-seen"
     ],
     "uuid": "053aa75b-5fdb-4f5e-8cf8-3969d46f6d19",
-    "version": 3,
+    "version": 4,
     "attributes": {
         "url": {
             "description": "Full URL",
@@ -30,6 +30,12 @@
             "misp-attribute": "datetime",
             "ui-priority": 0
         },
+        "last-seen": {
+            "description": "Last time this URL has been seen",
+            "disable_correlation": true,
+            "misp-attribute": "datetime",
+            "ui-priority": 0
+        },
         "hash": {
             "description": "Hash of downloaded content",
             "misp-attribute": "sha1",
@@ -45,6 +51,11 @@
             "misp-attribute": "mime-type",
             "disable_correlation": true,
             "ui-priority": 2
+        },
+        "source": {
+            "description": "Source(s) that reported the URL",
+            "misp-attribute": "text",
+            "ui-priority": 0
         }
     }
 }
