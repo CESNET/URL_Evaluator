@@ -70,6 +70,7 @@ int blacklist_size = 0;
 UR_FIELDS (
    ipaddr SRC_IP,
    ipaddr DST_IP,
+   uint16 DST_PORT,
    time TIME_FIRST,
    time TIME_LAST,
    uint64 BYTES,

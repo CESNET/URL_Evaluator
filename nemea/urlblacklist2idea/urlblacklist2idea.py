@@ -21,7 +21,7 @@ from report2idea import *
 MODULE_NAME = "urlblacklist2idea"
 MODULE_DESC = "Converts output of url_blacklist_filter module to IDEA."
 REQ_TYPE = pytrap.FMT_UNIREC
-REQ_FORMAT = "ipaddr SRC_IP,time TIME_FIRST,time TIME_LAST,uint64 BYTES,uint32 PACKETS,string HTTP_REQUEST_HOST,string HTTP_REQUEST_URL,uint32 HTTP_RESPONSE_STATUS_CODE"
+REQ_FORMAT = "ipaddr SRC_IP,ipaddr DST_IP,uint16 DST_PORT,time TIME_FIRST,time TIME_LAST,uint64 BYTES,uint32 PACKETS,string HTTP_REQUEST_HOST,string HTTP_REQUEST_URL,uint32 HTTP_RESPONSE_STATUS_CODE"
 
 # Set logger (format and verbosity level should be set by the common part of report2idea)
 logger = logging.getLogger("urlblacklist2idea.py")
@@ -232,6 +232,7 @@ def convert_to_idea(rec, opts):
                 "URL": [url],
                 "Type": ["Malware"],
                 "Proto": ["http"],
+                "Port": [rec.DST_PORT],
                 "Ref": [], 
             }
         ],
