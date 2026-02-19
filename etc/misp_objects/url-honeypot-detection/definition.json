@@ -7,7 +7,7 @@
         "first-seen"
     ],
     "uuid": "053aa75b-5fdb-4f5e-8cf8-3969d46f6d19",
-    "version": 4,
+    "version": 5,
     "attributes": {
         "url": {
             "description": "Full URL",
@@ -55,6 +55,7 @@
         "source": {
             "description": "Source(s) that reported the URL",
             "misp-attribute": "text",
+            "disable_correlation": true,
             "ui-priority": 0
         }
     }
