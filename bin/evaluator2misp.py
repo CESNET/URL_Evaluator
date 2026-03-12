@@ -111,7 +111,7 @@ def create_object(db_row):
 
     # Add extracted IP or domain
     if ip:
-        new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=True, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": True})
+        new_object.add_attribute(object_relation="ip-dst|port", simple_value=ip, to_ids=to_ids, Attribute={"type": "ip-dst|port", "value": ip, "to_ids": to_ids})
     elif domain:
         new_object.add_attribute(object_relation="domain", simple_value=domain, to_ids=False, Attribute={"type": "domain", "value": domain, "to_ids": False})
 
@@ -155,7 +155,6 @@ def sync_urls(misp, db):
 
     # Fetch MISP event
     event = get_or_create_event(misp)
-    modified = False
 
     # Fetch all URLs currently in MISP
     misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in event.objects]
@@ -165,7 +164,6 @@ def sync_urls(misp, db):
         if url not in misp_urls:
             logger.debug(f"Adding new URL: {url}")
             event.add_object(create_object(db_row))
-            modified = True
 
     # Update existing URLs
     for obj in event.objects:
@@ -178,27 +176,34 @@ def sync_urls(misp, db):
                 # URL status has changed, modify 'to_ids' flag
                 logger.debug(f"Updating IDS flag for '{url.value}'")
                 url.to_ids = True if db_urls[url.value][6] == 'active' else False
-                modified = True
+                if ip := obj.get_attributes_by_relation("ip-dst|port"):
+                    ip[0].to_ids = url.to_ids
             if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
                 # Last seen timestamp is outdated
                 logger.debug(f"Updating last-seen for '{url.value}'")
                 last_seen.value = db_urls[url.value][3]
-                modified = True
             if source.value != db_urls[url.value][8]:
                 # New source(s) reported the URL
                 logger.debug(f"Updating source for '{url.value}'")
                 last_seen.value = db_urls[url.value][8]
-                modified = True
         else:
             # URL was deleted, remove it from MISP too
             logger.debug(f"Deleting old URL: {url}")
             event.delete_object(obj.id)
-            modified = True
+
+    # Update event
+    event = misp.update_event(event, pythonify=True)
+
+    # Refresh comment attributes (so that they remain visible in MISP UI)
+    comment1 = event.get_attribute_by_uuid("1716011a-b02b-427c-b042-242fc3e0df3e")
+    comment2 = event.get_attribute_by_uuid("e5b21a21-0178-43c6-9d38-747f1f8c4811")
+    comment1.timestamp = datetime.now(timezone.utc)
+    comment2.timestamp = datetime.now(timezone.utc)
+    misp.update_attribute(comment1)
+    misp.update_attribute(comment2)
 
     # Commit changes
-    if modified:
-        event = misp.update_event(event, pythonify=True)
-        misp.publish(event.id, alert=False)
+    misp.publish(event.id, alert=False)
 
 
 def add_yesterdays_sightings(misp, db):
