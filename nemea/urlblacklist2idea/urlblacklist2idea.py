@@ -24,7 +24,7 @@ REQ_TYPE = pytrap.FMT_UNIREC
 REQ_FORMAT = "ipaddr SRC_IP,ipaddr DST_IP,uint16 DST_PORT,time TIME_FIRST,time TIME_LAST,uint64 BYTES,uint32 PACKETS,string HTTP_REQUEST_HOST,string HTTP_REQUEST_URL,uint32 HTTP_RESPONSE_STATUS_CODE"
 
 # Set logger (format and verbosity level should be set by the common part of report2idea)
-logger = logging.getLogger("urlblacklist2idea.py")
+logger = logging.getLogger("urlblacklist2idea")
 
 
 def create_msg(rec, details):
@@ -40,6 +40,7 @@ def create_msg(rec, details):
         msg = msg + "."
     elif 200 <= rec.HTTP_RESPONSE_STATUS_CODE < 300:
         msg = msg + " and successfully downloaded some content."
+        details["content_downloaded"] = True
     elif rec.HTTP_RESPONSE_STATUS_CODE >= 400:
         msg = msg + f", but it seems it failed to download the content (response code {rec.HTTP_RESPONSE_STATUS_CODE})."
     else: # 3xx (redirection) or 1xx (informational, doesn't occur normally)
@@ -51,7 +52,7 @@ def create_msg(rec, details):
             msg = msg + f" This URL is known to host a malware ({details.get('threat_label')})."
         else:
             msg = msg + " This URL is known to host a malware."
-        if 200 <= rec.HTTP_RESPONSE_STATUS_CODE < 300:
+        if details.get("content_downloaded"):
             msg = msg + " If the content was executed, the host may now be infected."
         else:
             msg = msg + " If the connection was successful and the content executed, the host may now be infected."
@@ -226,14 +227,13 @@ def convert_to_idea(rec, opts):
         "ByteCount": bytes,
         "Source": [
             {
-                "Proto": ["http"]
+                "Proto": ["tcp", "http"]
             },
             {
                 "URL": [url],
                 "Type": ["Malware"],
-                "Proto": ["http"],
+                "Proto": ["tcp", "http"],
                 "Port": [rec.DST_PORT],
-                "Ref": [], 
             }
         ],
         "Node": [{
@@ -241,7 +241,7 @@ def convert_to_idea(rec, opts):
             "SW": ["Nemea", "url_blacklist_filter"],
             "Type": [ "Flow", "Blacklist"]
         }],
-        "Attach": [{}],
+        "Attach": [{"Ref": []}],
     }
 
     setAddr(idea["Source"][0], rec.SRC_IP)
@@ -255,15 +255,19 @@ def convert_to_idea(rec, opts):
 
     if details.get("content_size"):
         idea["Attach"][0]["Size"] = details["content_size"]
-    
+
+    idea["Attach"][0]["Ref"].extend(get_links(url, details.get("hash")))
+    if details.get("threat_label"):
+        idea["Attach"][0]["Name"] = [details.get("threat_label")]
+        idea["Attach"][0]["Ref"].append(f"virustotal:{details.get('threat_label')}")
+    if idea["Attach"][0]["Ref"] == []:
+        del idea["Attach"][0]["Ref"]
+
     if details.get("note"):
         idea["Source"][1]["Note"] = details["note"]
 
-    ref_links = get_links(url, details.get("hash"))
-    idea["Source"][1]["Ref"].extend(ref_links)
-
-    if idea["Source"][1]["Ref"] == []:
-        del idea["Source"][1]["Ref"]
+    if details.get("content_downloaded"):
+        idea["Source"][1]["Type"].append("Downloaded")
 
     if idea["Attach"] == [{}]:
         del idea["Attach"]
