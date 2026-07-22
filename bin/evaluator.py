@@ -154,6 +154,10 @@ def analyze_content(url):
         return dict(classification="unreachable", classification_reason="Too many redirects")
     except requests.exceptions.ConnectionError:
         return dict(classification="unreachable", classification_reason="Connection refused")
+    except Exception as e:
+        # this is usually caused by requests.get() trying to parse invalid URLs
+        logger.warning(f"Failed to analyze URL content: {type(e)}: {e}")
+        return dict(classification="unclassified", classification_reason="Internal error")
 
 
 def is_blacklisted(url):
