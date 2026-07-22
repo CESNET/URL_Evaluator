@@ -39,17 +39,17 @@ def extract_ip_domain_port(url):
         return None, hostname
 
 
-def get_or_create_event(misp):
+def get_or_create_event(misp, source):
     """
     Fetch existing MISP event or create a new one if it doesn't exist yet
     """
-    event_info = "Malicious URLs from SSH honeypots"
+    event_info = f"Malicious URLs from SSH honeypots ({source})"
     event_tags = [
         'tlp:clear',
         'coa:discover=honeypot',
         'rsit:malicious-code="malware-distribution"',
         'CESNET:malware-urls',
-        'CESNET:source=\'all\''
+        f'CESNET:source=\'{source}\''
     ]
     if existing := misp.search(eventinfo=event_info, event_tags=event_tags, pythonify=True):
         logger.debug(f"Using existing event (ID {existing[0].id})")
@@ -57,7 +57,7 @@ def get_or_create_event(misp):
     event = MISPEvent()
     event.info = event_info
     event.date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    event.distribution = 3
+    event.distribution = 2
     event.threat_level_id = 3
     event.analysis = 2
     new = misp.add_event(event, pythonify=True)
@@ -131,6 +131,18 @@ def sync_urls(misp, db):
       - delete outdated records
     """
 
+    # Prepare sources of the source URLs for all discovered URLs from the DB
+    discovered_url_sources = {}
+    rows = db.execute("""
+        SELECT
+            du.url,
+            us.source
+        FROM discovered_urls du
+        LEFT JOIN url_source us ON du.src_url = us.url
+        """).fetchall()
+    for row in rows:
+        discovered_url_sources[row[0]] = row[1]
+
     # Load all malicious/miner URLs from the DB
     cutoff_date = (date.today() - timedelta(days=config.misp_max_age)).strftime("%Y-%m-%d")
     rows = db.execute("""
@@ -152,83 +164,73 @@ def sync_urls(misp, db):
     if not rows:
         logger.info("No malicious URLs")
         return
-    db_urls = {row[0]: row for row in rows}
-    logger.info(f"Found {len(db_urls)} malicious URLs, updating MISP objects...")
+    logger.info(f"Found {len(rows)} malicious URLs, updating MISP objects...")
 
-    # Fetch MISP event
-    event = get_or_create_event(misp)
-
-    # Fetch all URLs currently in MISP
-    misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in event.objects]
-
-    # Add new URLs
-    for url, db_row in db_urls.items():
-        if url not in misp_urls:
-            logger.debug(f"Adding new URL: {url}")
-            event.add_object(create_object(db_row))
-
-    # Update existing URLs
-    for obj in list(event.objects):
-        url = obj.get_attributes_by_relation("url")[0]
-        last_seen = obj.get_attributes_by_relation("last-seen")[0]
-        source = obj.get_attributes_by_relation("source")[0]
-        if url.value in db_urls:
-            if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
-               (url.to_ids is True and db_urls[url.value][6] != 'active'):
-                # URL status has changed, modify 'to_ids' flag
-                logger.debug(f"Updating IDS flag for '{url.value}'")
-                url.to_ids = True if db_urls[url.value][6] == 'active' else False
-                if ip := obj.get_attributes_by_relation("ip-dst|port"):
-                    ip[0].to_ids = url.to_ids
-            if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
-                # Last seen timestamp is outdated
-                logger.debug(f"Updating last-seen for '{url.value}'")
-                last_seen.value = db_urls[url.value][3]
-            if source.value != db_urls[url.value][8]:
-                # New source(s) reported the URL
-                logger.debug(f"Updating source for '{url.value}'")
-                source.value = db_urls[url.value][8]
-        else:
-            # URL was deleted, remove it from MISP too
-            logger.debug(f"Deleting old URL: {url}")
-            event.delete_object(obj.id)
-
-    # Update event
-    event = misp.update_event(event, pythonify=True)
-
-    # Refresh comment attributes (so that they remain visible in MISP UI)
-    comment1 = event.get_attribute_by_uuid("1716011a-b02b-427c-b042-242fc3e0df3e")
-    comment2 = event.get_attribute_by_uuid("e5b21a21-0178-43c6-9d38-747f1f8c4811")
-    comment1.timestamp = datetime.now(timezone.utc)
-    comment2.timestamp = datetime.now(timezone.utc)
-    misp.update_attribute(comment1)
-    misp.update_attribute(comment2)
-
-    # Commit changes
-    misp.publish(event.id, alert=False)
-
-
-def add_yesterdays_sightings(misp, db):
-    """
-    Add sightings to URLS that were last seen yesterday
-    """
-
-    # Load URLs that were seen yesterday
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-    rows = db.execute("SELECT url FROM urls WHERE last_seen=? AND (classification='malicious' OR classification='miner')", (yesterday,)).fetchall()
-    if not rows:
-        logger.info("No malicious URLs from yesterday")
-        return
-    logger.info(f"Found {len(rows)} malicious URLs from yesterday")
-
-    # Add sightings to MISP
-    logger.info("Adding new sightings")
+    # Group DB records by source
+    db_urls_by_source = {}
     for row in rows:
-        misp.add_sighting({"value": row[0]})
-    logger.debug("Done")
+        url = row[0]
+        src = row[8].split(', ')
+        for s in src:
+            if s == "URL content":
+                s = discovered_url_sources[url]
+            if s not in db_urls_by_source:
+                db_urls_by_source[s] = {}
+            db_urls_by_source[s][url] = row
+
+    # Sync the data with MISP (each source has its own MISP event)
+    for source in [
+        "CESNET Hugo",
+        "CZ.NIC HaaS",
+        "GEANT T-Pot",
+        "HoneyNet.Asia"
+    ]:
+        db_urls = db_urls_by_source.get(source, {})
+        event = get_or_create_event(misp, source)
+
+        # Fetch all URLs currently in MISP
+        misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in event.objects]
+
+        # Add new URLs
+        for url, db_row in db_urls.items():
+            if url not in misp_urls:
+                logger.debug(f"Adding new URL: {url}")
+                event.add_object(create_object(db_row))
+
+        # Update existing URLs
+        for obj in list(event.objects):
+            url = obj.get_attributes_by_relation("url")[0]
+            last_seen = obj.get_attributes_by_relation("last-seen")[0]
+            source = obj.get_attributes_by_relation("source")[0]
+            if url.value in db_urls:
+                if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
+                        (url.to_ids is True and db_urls[url.value][6] != 'active'):
+                    # URL status has changed, modify 'to_ids' flag
+                    logger.debug(f"Updating IDS flag for '{url.value}'")
+                    url.to_ids = True if db_urls[url.value][6] == 'active' else False
+                    if ip := obj.get_attributes_by_relation("ip-dst|port"):
+                        ip[0].to_ids = url.to_ids
+                if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
+                    # Last seen timestamp is outdated
+                    logger.debug(f"Updating last-seen for '{url.value}'")
+                    last_seen.value = db_urls[url.value][3]
+                if source.value != db_urls[url.value][8]:
+                    # New source(s) reported the URL
+                    logger.debug(f"Updating source for '{url.value}'")
+                    source.value = db_urls[url.value][8]
+            else:
+                # URL was deleted, remove it from MISP too
+                logger.debug(f"Deleting old URL: {url}")
+                event.delete_object(obj.id)
+
+        # Update event
+        event = misp.update_event(event, pythonify=True)
+
+        # Commit changes
+        misp.publish(event.id, alert=False)
 
 
-def evaluator2misp():
+def evaluator2misp_bysource():
     logger.info("Job started")
     db = SQLiteWrapper(config.db_path)
 
@@ -245,13 +247,6 @@ def evaluator2misp():
         logger.exception(f"Failed to sync data with MISP: {type(e).__name__}: {e}")
         db.close()
         sys.exit(2)
-
-    try:
-        add_yesterdays_sightings(misp, db)
-    except Exception as e:
-        logger.exception(f"Failed to add new sightings: {type(e).__name__}: {e}")
-        db.close()
-        sys.exit(3)
 
     db.close()
     logger.info("Job finished")
@@ -274,7 +269,7 @@ if __name__ == '__main__':
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("evaluator2misp.py")
+    logger = logging.getLogger("evaluator2misp_bysource.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
@@ -293,11 +288,11 @@ if __name__ == '__main__':
 
     logger.info("Started")
     if args.now:
-        evaluator2misp()
+        evaluator2misp_bysource()
 
     # Start scheduler
     scheduler = BlockingScheduler(timezone=config.scheduler["timezone"])
-    scheduler.add_job(evaluator2misp, "cron", **config.scheduler["evaluator2misp"])
+    scheduler.add_job(evaluator2misp_bysource, "cron", **config.scheduler["evaluator2misp_bysource"])
     scheduler.start()
 
     logger.info("Stopped")

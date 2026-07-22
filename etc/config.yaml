@@ -25,6 +25,9 @@ scheduler:
   evaluator2misp:
     hour: 12
     minute: 30
+  evaluator2misp_bysource:
+    hour: 12
+    minute: 30
 
 # Max age of inactive/invalid URLs
 # Older records are automatically deleted
@@ -67,6 +70,7 @@ warden_sources:
 misp_url: "!!! CHANGE THIS !!!"
 misp_key: "!!! CHANGE THIS !!!"
 misp_verify_cert: false
+misp_max_age: 60 # Export only URLs that were last seen in the last N days
 
 # Virustotal
 vt_url: "https://www.virustotal.com/api/v3/"
