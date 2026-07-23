@@ -12,11 +12,17 @@ def storage_path(base_dir: str, content_hash: str) -> Path:
     """
     if not content_hash or len(content_hash) < 4:
         raise ValueError("Invalid content hash")
-    
+
+    content_hash = content_hash.lower()
+
+    # SHA-256 hashes are 64 hex characters; validate the whole string.
+    if len(content_hash) != 64 or not all(c in "0123456789abcdef" for c in content_hash):
+        raise ValueError("Invalid SHA-256 content hash")
+
     dir1 = content_hash[0:2]
     dir2 = content_hash[2:4]
     filename = f"{content_hash}.blob"
-    
+
     return Path(base_dir) / dir1 / dir2 / filename
 
 def save_content(base_dir: str, content: bytes) -> tuple[str, str, str, bool]:
@@ -61,3 +67,38 @@ def content_exists(base_dir: str, content_hash: str) -> bool:
     Check if content exists on disk.
     """
     return storage_path(base_dir, content_hash).exists()
+
+
+def delete_content(base_dir: str, content_hash: str) -> bool:
+    """
+    Delete a stored content snapshot from disk.
+
+    Returns True if the file existed and was removed, False otherwise.
+    Parent directories created by the storage layout are removed if empty.
+    """
+    path = storage_path(base_dir, content_hash)
+    if not path.exists():
+        return False
+
+    try:
+        path.unlink()
+        logger.debug(f"Deleted content snapshot: {content_hash} from {path}")
+    except Exception as e:
+        logger.exception(f"Error deleting content {content_hash}: {e}")
+        raise
+
+    # Clean up empty parent directories (up to base_dir).
+    try:
+        for parent in path.parents:
+            if parent == Path(base_dir).resolve():
+                break
+            try:
+                parent.rmdir()
+            except OSError:
+                # Directory not empty or already removed; stop ascending.
+                break
+    except Exception:
+        # Non-fatal cleanup; the snapshot itself is already gone.
+        pass
+
+    return True
