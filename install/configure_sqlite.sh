@@ -9,3 +9,6 @@ echob "** Setting up evaluator DB **"
 
 sudo -u url_evaluator sqlite3 /data/url_evaluator/db.sqlite < $BASEDIR/create_db.sql
 chmod 664 /data/url_evaluator/db.sqlite
+
+echob "** Running DB migration **"
+sudo -u url_evaluator python3 $BASEDIR/migrate_db.py -c /etc/url_evaluator/config.yaml

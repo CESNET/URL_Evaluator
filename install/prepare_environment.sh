@@ -33,3 +33,8 @@ chmod -R 775 /var/log/url_evaluator
 mkdir -p /data/url_evaluator
 chown -R url_evaluator:url_evaluator /data/url_evaluator/
 chmod -R 775 /data/url_evaluator
+
+# Content storage directory
+mkdir -p /data/url_evaluator/content
+chown -R url_evaluator:url_evaluator /data/url_evaluator/content/
+chmod -R 775 /data/url_evaluator/content
