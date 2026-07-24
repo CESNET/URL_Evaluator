@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
+from common.db_helpers import persist_content_snapshot
 from common.utils import is_valid, extract_commands, process_new_session
 
 
@@ -103,17 +104,20 @@ def search_for_nested_urls(content, src_url):
 
 def analyze_content(url):
     """
-    Download content from given URL and check its hash on VirusTotal / MalwareBazaar
+    Download content from given URL, persist a snapshot, and check its hash on
+    VirusTotal / MalwareBazaar.
     """
 
     try:
         with requests.get(url, stream=True, proxies=proxies, timeout=10) as response:
             if not response.ok:
                 return dict(classification="unreachable", classification_reason=f"Status code {response.status_code}")
-            if (content_size := response.headers.get('Content-Length')) is None:
+            if (content_size_header := response.headers.get('Content-Length')) is None:
                 return dict(classification="unclassified", classification_reason="No content")
-            if (content_size_mb := int(content_size) / (1024 ** 2)) > config.max_file_size:
+            if (content_size_mb := int(content_size_header) / (1024 ** 2)) > config.max_file_size:
                 return dict(classification="unclassified", classification_reason=f"File too large: {content_size_mb:.2f} MB")
+
+            content = response.content
 
             # Determine file type
             file_type = ""
@@ -121,16 +125,21 @@ def analyze_content(url):
                 file_type = response.headers['content-type'].split(";")[0]
             else:
                 try:
-                    file_type = magic.from_buffer(response.content, mime=True)
+                    file_type = magic.from_buffer(content, mime=True)
                 except Exception as e:
                     logger.debug(f"Couldn't determine file type: {e}")
 
+            # Persist the downloaded content snapshot and update url_content / urls
+            snapshot = persist_content_snapshot(
+                db, config.content_storage_path, url, response, content, file_type
+            )
+
             # Search the downloaded content for new URLs
             if file_type in ["application/x-sh", "application/x-shellscript",  "text/plain", "text/x-shellscript", "text/x-sh"]:
-                search_for_nested_urls(response.content, url)
+                search_for_nested_urls(content, url)
 
-            sha1 = hashlib.sha1(response.content).hexdigest()
-            result = dict(hash=sha1, content_size=content_size)
+            sha1 = snapshot["hash"]
+            result = dict(hash=sha1, content_size=snapshot["content_size"])
             if file_type:
                 result.update(file_mime_type=file_type)
 
