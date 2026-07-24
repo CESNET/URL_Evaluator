@@ -32,7 +32,10 @@ def tpot2evaluator():
         with SQLiteWrapper(config.db_path) as db:
             for session in response.json():
                 logger.debug(f"Looking for new URLs in '{session['input']}'")
-                if new_urls := process_new_session(db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", None):
+                source_detail = session.get("sensor", session.get("host", None))
+                if new_urls := process_new_session(
+                    db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", source_detail
+                ):
                     logger.info(f"Discovered {len(new_urls)} new URLs: {new_urls}")
     except Exception as e:
         logger.error(f"Error while processing sessions: {type(e).__name__}: {e}")

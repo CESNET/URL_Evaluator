@@ -187,6 +187,13 @@ def ensure_schema(db) -> None:
     # ------------------------------------------------------------------
     # Add new columns to existing tables when migrating an old DB
     # ------------------------------------------------------------------
+    # Ensure url_source has a unique constraint on (url, source) so that
+    # ON CONFLICT(url, source) works in record_url_source().
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_url_source_unique
+        ON url_source(url, source);
+    """)
+
     _add_column(cursor, "urls", "latest_content_hash", "TEXT")
     _add_column(cursor, "url_source", "source_detail", "TEXT")
     _add_column(cursor, "url_source", "origin_url", "TEXT")

@@ -72,6 +72,49 @@ def get_domain(url: str):
         return None
 
 
+def record_url_source(db, url, source, source_detail=None, origin_url=None,
+                      observed_at=None, idea_id=None, session_hash=None):
+    """
+    Record an observation of `url` in `url_source`, preserving first-seen time
+    and updating the last-seen time on duplicate observations.
+    """
+    if observed_at is None:
+        from datetime import datetime, timezone
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+    db.execute(
+        """
+        INSERT INTO url_source (url, source, source_detail, origin_url,
+                                observed_at, idea_id, session_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url, source) DO UPDATE SET
+            source_detail = COALESCE(excluded.source_detail, url_source.source_detail),
+            origin_url = COALESCE(excluded.origin_url, url_source.origin_url),
+            observed_at = COALESCE(url_source.observed_at, excluded.observed_at),
+            idea_id = COALESCE(excluded.idea_id, url_source.idea_id),
+            session_hash = COALESCE(excluded.session_hash, url_source.session_hash);
+        """,
+        (url, source, source_detail, origin_url, observed_at, idea_id, session_hash),
+    )
+
+
+def record_discovered_url(db, url, src_url, discovered_at=None):
+    """
+    Record that `url` was discovered inside the content of `src_url`.
+    """
+    if discovered_at is None:
+        from datetime import datetime, timezone
+        discovered_at = datetime.now(timezone.utc).isoformat()
+
+    db.execute(
+        """
+        INSERT OR IGNORE INTO discovered_urls (url, src_url, discovered_at)
+        VALUES (?, ?, ?)
+        """,
+        (url, src_url, discovered_at),
+    )
+
+
 def process_new_session(db, config, session, idea_id, detect_time, source, source_url):
     """
     Process a new session:
@@ -84,7 +127,11 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
 
     inserted_urls = []
     session_hash = hashlib.md5(session.encode()).hexdigest()
+    if detect_time is None:
+        from datetime import datetime, timezone
+        detect_time = datetime.now(timezone.utc).isoformat()
     date = detect_time.split("T")[0]
+    observed_at = detect_time
 
     # Extract URLs from shell commands
     if not (extracted_urls := extract_urls(session)):
@@ -100,9 +147,16 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
     )
     for url, occurrences in Counter(extracted_urls).items():
         db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
-        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+        record_url_source(
+            db, url, source,
+            source_detail=source_url,
+            origin_url=source_url,
+            observed_at=observed_at,
+            idea_id=idea_id,
+            session_hash=session_hash,
+        )
         if source_url:
-            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
+            record_discovered_url(db, url, source_url, discovered_at=observed_at)
         db.execute(
             """
             INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)

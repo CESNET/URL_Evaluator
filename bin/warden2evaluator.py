@@ -78,7 +78,9 @@ def receiver():
                         logger.debug(f"Looking for new URLs in '{content}'")
 
                         # Search for new URLs
-                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), source, None):
+                        if new_urls := process_new_session(
+                            db, config, content, event.get("ID"), event.get("DetectTime"), source, None
+                        ):
                             logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
 
 
