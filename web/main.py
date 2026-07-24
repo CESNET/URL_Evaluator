@@ -7,6 +7,7 @@ import sys
 import argparse
 import logging
 import base64
+import json
 
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, make_response, redirect, url_for
@@ -19,6 +20,7 @@ from common.config import Config
 from common.db import SQLiteWrapper
 from common.db_helpers import update_url_field
 from common.utils import is_valid, get_domain
+from common.content_storage import load_content, storage_path
 
 # Global variables
 page = 1
@@ -44,8 +46,10 @@ if args.verbose:
 config = Config(args.config)
 
 # Connect to MISP
+misp = None
 try:
-    misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert)
+    if config.misp_url and not config.misp_url.startswith("!!! CHANGE"):
+        misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert)
 except Exception as e:
     print(f"Error: Cannot connect to MISP: {e}")
 
@@ -67,6 +71,8 @@ def get_urlhaus_link(url):
 
 
 def get_misp_link(url_detail):
+    if misp is None:
+        return None
     if url_detail.reported == "yes":
         try:
             events = misp.search(controler="events", value=url_detail.url, type_attribute='url')
@@ -179,18 +185,36 @@ def list_all():
         except BadRequestKeyError:
             pass
 
-        # add new url
+        # add new urls (one or more, newline separated)
         try:
-            if (add_url := flask.request.form['add-url'].strip()) and is_valid(add_url):
+            if add_url_text := flask.request.form['add-url'].strip():
+                added = 0
+                skipped = 0
+                failed = 0
                 with SQLiteWrapper(config.db_path) as db:
                     t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
-                    if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
-                        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
-                        adding = "success"
-                    else:
-                        adding = "in_db"
+                    for add_url in add_url_text.splitlines():
+                        add_url = add_url.strip()
+                        if not add_url:
+                            continue
+                        if not is_valid(add_url):
+                            failed += 1
+                            continue
+                        in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
+                        if not in_db:
+                            db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
+                            db.execute("INSERT OR IGNORE INTO url_source (url, source, observed_at) VALUES (?, ?, ?)", (add_url, "Manual", datetime.now(timezone.utc).isoformat()))
+                            added += 1
+                        else:
+                            skipped += 1
+                if failed and not added and not skipped:
+                    adding = "fail"
+                elif skipped and not added and not failed:
+                    adding = "in_db"
+                elif added:
+                    adding = "success"
+                else:
+                    adding = "fail"
             else:
                 adding = "fail"
         except BadRequestKeyError:
@@ -268,7 +292,77 @@ def detail():
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
-        sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
+        url_detail.observations = [
+            {
+                "source": row[0],
+                "source_detail": row[1],
+                "origin_url": row[2],
+                "observed_at": row[3],
+                "idea_id": row[4],
+                "session_hash": row[5],
+            }
+            for row in db.execute(
+                "SELECT source, source_detail, origin_url, observed_at, idea_id, session_hash FROM url_source WHERE url = ? ORDER BY observed_at DESC",
+                (url,),
+            ).fetchall()
+        ]
+        url_detail.content_history = [
+            {
+                "content_hash": row[0],
+                "first_seen": row[1],
+                "last_seen": row[2],
+                "is_latest": row[3],
+                "sha1": row[4],
+                "mime_type": row[5],
+                "content_size": row[6],
+                "http_status": row[7],
+                "downloaded_at": row[8],
+            }
+            for row in db.execute(
+                """
+                SELECT cs.content_hash, uc.first_seen, uc.last_seen, uc.is_latest,
+                       cs.sha1, cs.mime_type, cs.content_size, cs.http_status, cs.downloaded_at
+                FROM url_content uc
+                JOIN content_snapshot cs ON cs.content_hash = uc.content_hash
+                WHERE uc.url = ?
+                ORDER BY uc.first_seen DESC
+                """,
+                (url,),
+            ).fetchall()
+        ]
+        url_detail.latest_snapshot_headers = None
+        if url_detail.content_history:
+            latest_hash = url_detail.content_history[0]["content_hash"]
+            headers_row = db.execute(
+                "SELECT http_headers FROM content_snapshot WHERE content_hash = ?",
+                (latest_hash,),
+            ).fetchone()
+            if headers_row and headers_row[0]:
+                try:
+                    url_detail.latest_snapshot_headers = json.dumps(
+                        json.loads(headers_row[0]), indent=2, ensure_ascii=False
+                    )
+                except Exception:
+                    url_detail.latest_snapshot_headers = headers_row[0]
+        url_detail.history = [
+            {
+                "changed_at": row[0],
+                "field": row[1],
+                "old_value": row[2],
+                "new_value": row[3],
+                "changed_by": row[4],
+            }
+            for row in db.execute(
+                "SELECT changed_at, field, old_value, new_value, changed_by FROM url_history WHERE url = ? ORDER BY changed_at DESC",
+                (url,),
+            ).fetchall()
+        ]
+        sessions = []
+        try:
+            sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
+        except Exception:
+            # url_session may not exist in migrated databases yet
+            sessions = []
 
     # count not active days
     inactive_for = 0
@@ -317,7 +411,7 @@ def edit_detail():
             update_url_field(db, url, "last_edit", user, changed_by=user)
             if classification == "malicious":
                 back_propagation(db, url)
-            return redirect(url_for("list_all", show=show))
+            return redirect(url_for("detail", url=url, show=show))
 
         url_list = db.execute("SELECT * FROM urls WHERE url = ? LIMIT 1", (url,)).fetchall()
 
@@ -395,3 +489,56 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+@app.route('/download/<content_hash>', methods=['GET'])
+def download_content(content_hash):
+    """Serve a stored content snapshot as a binary download."""
+    import re
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", content_hash):
+        return make_response(jsonify({'error': 'Invalid content hash'}), 400)
+
+    base_dir = getattr(config, 'content_storage_path', os.path.join(os.path.dirname(config.db_path), 'content'))
+    try:
+        data = load_content(base_dir, content_hash)
+    except FileNotFoundError:
+        return make_response(jsonify({'error': 'Content not found'}), 404)
+
+    response = make_response(data)
+    response.headers['Content-Type'] = 'application/octet-stream'
+    response.headers['Content-Disposition'] = f'attachment; filename="{content_hash}.blob"'
+    return response
+
+
+@app.route('/request_sandbox', methods=['POST'])
+def request_sandbox():
+    """Stub endpoint to request sandbox analysis for a content snapshot."""
+    user = get_user(flask.request.environ)
+    url = flask.request.form.get('url') or flask.request.args.get('url')
+    content_hash = flask.request.form.get('content_hash')
+
+    if not url or not content_hash:
+        return make_response(jsonify({'error': 'Missing url or content_hash'}), 400)
+
+    import re
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", content_hash):
+        return make_response(jsonify({'error': 'Invalid content hash'}), 400)
+
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    with SQLiteWrapper(config.db_path) as db:
+        snapshot = db.execute(
+            "SELECT 1 FROM content_snapshot WHERE content_hash = ?", (content_hash,)
+        ).fetchone()
+        if not snapshot:
+            return make_response(jsonify({'error': 'Content snapshot not found'}), 404)
+
+        db.execute(
+            """
+            INSERT INTO sandbox_job
+            (content_hash, url, provider, status, submitted_at, requested_by)
+            VALUES (?, ?, ?, 'pending', ?, ?)
+            """,
+            (content_hash, url, 'anyrun', submitted_at, user),
+        )
+
+    return redirect(url_for('detail', url=url))

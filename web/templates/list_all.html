@@ -16,51 +16,62 @@
 </div>
 {% endif %}
 <div id="list_all">
-  <!-- add filter hiden option -->
+  <!-- global search -->
+  <div id="global-search" class="global-search">
+    <form action="{{ url_for('list_all', page=1) }}" method="post" class="global-search-form">
+      <input class="filter-input global-search-input" type="text" name="find-url" placeholder="Search URL..."
+        value="{{ filter_params.get('url', '') }}">
+      <button class="btn-style" type="submit">Search</button>
+      {% if filter_params.get('url') %}
+      <button class="btn-style" type="submit" name="clear-url-search" value="1"
+        onclick="this.form.querySelector('input[name=find-url]').value='';">Clear</button>
+      {% endif %}
+    </form>
+  </div>
+
+  <!-- add filter hidden option -->
   <div id="filters">
     <form action="{{ url_for('list_all', page=1) }}" method="post" enctype="application/x-www-form-urlencoded">
       <div class="filter-wrap">
         <div>
           <label class="filter-label" for="find-url">URL</label>
-          <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address" {%if
-            filter_params["url"] %} value="{{filter_params[" url"]}}" {% endif %}>
-        </div><!-- <button class="btn-style" type="submit">Search</button> -->
+          <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address"
+            value="{{ filter_params.get('url', '') }}">
+        </div>
 
         <div>
           <label class="filter-label" for="find-hash">Hash</label>
-          <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash" {%if
-            filter_params["hash"] %} value="{{filter_params[" hash"]}}" {% endif %}>
+          <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash"
+            value="{{ filter_params.get('hash', '') }}">
         </div>
-        <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-reason">Reason</label>
-          <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
-            filter_params["reason"] %} value="{{filter_params[" reason"]}}" {% endif %}>
+          <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason"
+            value="{{ filter_params.get('reason', '') }}">
         </div>
-        <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-note">Note</label>
-          <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note" {%if
-            filter_params["note"] %} value="{{filter_params[" note"]}}" {% endif %}>
+          <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note"
+            value="{{ filter_params.get('note', '') }}">
         </div>
 
         <div>
           <label class="filter-label" for="classification">Classification:</label>
           <select name="classification" id="filter-classification">
             <option selected value="">---select---</option>
-            <option {%if filter_params["classification"]=='malicious' %} selected {% endif %} value="malicious">
+            <option {%if filter_params.get("classification")=='malicious' %} selected {% endif %} value="malicious">
               Malicious</option>
-            <option {%if filter_params["classification"]=='harmless' %} selected {% endif %} value="harmless">Harmless
+            <option {%if filter_params.get("classification")=='harmless' %} selected {% endif %} value="harmless">Harmless
             </option>
-            <option {%if filter_params["classification"]=='unclassified' %} selected {% endif %} value="unclassified">
+            <option {%if filter_params.get("classification")=='unclassified' %} selected {% endif %} value="unclassified">
               Unclassified</option>
-            <option {%if filter_params["classification"]=='unreachable' %} selected {% endif %} value="unreachable">
+            <option {%if filter_params.get("classification")=='unreachable' %} selected {% endif %} value="unreachable">
               Unreachable</option>
-            <option {%if filter_params["classification"]=='invalid' %} selected {% endif %} value="invalid">Invalid
+            <option {%if filter_params.get("classification")=='invalid' %} selected {% endif %} value="invalid">Invalid
             </option>
-            <option {%if filter_params["classification"]=='miner' %} selected {% endif %} value="miner">Miner</option>
+            <option {%if filter_params.get("classification")=='miner' %} selected {% endif %} value="miner">Miner</option>
           </select>
         </div>
 
@@ -69,7 +80,7 @@
           <select name="src" id="filter-source">
             <option selected value="">---select---</option>
             {% for src in sources %}
-            <option {% if filter_params["src"] == src[0] %} selected {% endif %} value="{{src[0]}}">{{src[0]}}</option>
+            <option {% if filter_params.get("src") == src[0] %} selected {% endif %} value="{{src[0]}}">{{src[0]}}</option>
             {% endfor %}
           </select>
         </div>
@@ -78,8 +89,8 @@
           <label class="filter-label" for="status">Status:</label>
           <select name="status" id="filter-status">
             <option selected value="">---select---</option>
-            <option {%if filter_params["status"]=='active' %} selected {% endif %} value="active">Active</option>
-            <option {%if filter_params["status"]=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
+            <option {%if filter_params.get("status")=='active' %} selected {% endif %} value="active">Active</option>
+            <option {%if filter_params.get("status")=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
           </select>
         </div>
       </div>
@@ -90,9 +101,9 @@
   </div>
   <div id="add-url-wrap">
     <form action="{{ url_for('list_all', page=1) }}" method="post">
-      <label class="filter-label" for="add-url">Suspicious URL</label>
-      <input class="filter-input" type="text" id="add-url" name="add-url" placeholder="URL">
-      <button class="btn-style" type="submit">Add URL</button>
+      <label class="filter-label" for="add-url">Suspicious URLs (one per line)</label>
+      <textarea class="filter-input" id="add-url" name="add-url" rows="6" placeholder="http://example.com/malware"></textarea>
+      <button class="btn-style" type="submit">Add URLs</button>
     </form>
   </div>
 

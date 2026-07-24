@@ -1,9 +1,9 @@
 {% extends "main.html" %}
 
 {% block content %}
-<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 
-    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated, 
-    12. file_mime_type, 13. content_size, 14. threat_label 
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification,
+    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated,
+    12. file_mime_type, 13. content_size, 14. threat_label
     15. status, 16. active_last, 17. last_edit-->
 <div class="detail">
     <div class="wrap">
@@ -66,7 +66,7 @@
                     </td>
                 </tr>
                 <tr>
-                    <td>Source</td>
+                    <td>Sources</td>
                     <td>{{ url.src | join(', ') }}</td>
                 </tr>
 
@@ -194,7 +194,126 @@
 
         </div>
 
-    </div> 
+        <!-- Observations -->
+        {% if url.observations %}
+        <div class="section observations">
+            <h3>Observations</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Detail</th>
+                        <th>Observed at</th>
+                        <th>Origin URL</th>
+                        <th>Session / IDEA</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for obs in url.observations %}
+                    <tr>
+                        <td>{{ obs.source or '-' }}</td>
+                        <td>{{ obs.source_detail or '-' }}</td>
+                        <td>{{ obs.observed_at or '-' }}</td>
+                        <td>
+                            {% if obs.origin_url %}
+                            <a href="{{ url_for('detail', url=obs.origin_url) }}">{{ obs.origin_url }}</a>
+                            {% else %}-{% endif %}
+                        </td>
+                        <td>
+                            {% if obs.idea_id %}
+                            <a target="_blank" href="https://mentat-hub.cesnet.cz/mentat/events/{{ obs.idea_id }}/show" title="Event detail"><img class="mentat" src="{{ url_for("static", filename="img/mentat.png") }}"></a>
+                            {% endif %}
+                            {% if obs.session_hash %}
+                            <span class="badge">{{ obs.session_hash[:16] }}...</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        <!-- Content history -->
+        {% if url.content_history %}
+        <div class="section content-history">
+            <h3>Content history</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>First seen</th>
+                        <th>Last seen</th>
+                        <th>SHA-256</th>
+                        <th>SHA-1</th>
+                        <th>MIME type</th>
+                        <th>Size</th>
+                        <th>HTTP status</th>
+                        <th>Downloaded at</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in url.content_history %}
+                    <tr class="{% if entry.is_latest == 'yes' %}latest{% endif %}">
+                        <td>{{ entry.first_seen or '-' }}</td>
+                        <td>{{ entry.last_seen or '-' }}</td>
+                        <td class="hash-cell"><code>{{ entry.content_hash[:16] }}...</code></td>
+                        <td class="hash-cell"><code>{{ entry.sha1[:16] if entry.sha1 else '-' }}...</code></td>
+                        <td>{{ entry.mime_type or '-' }}</td>
+                        <td>{{ entry.content_size if entry.content_size is not none else '-' }} B</td>
+                        <td>{{ entry.http_status or '-' }}</td>
+                        <td>{{ entry.downloaded_at or '-' }}</td>
+                        <td>
+                            <a href="{{ url_for('download_content', content_hash=entry.content_hash) }}" class="btn-style">Download</a>
+                            <form class="inline-form" method="post" action="{{ url_for('request_sandbox', url=url.url) }}">
+                                <input type="hidden" name="content_hash" value="{{ entry.content_hash }}">
+                                <button class="btn-style" type="submit">Request sandbox</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if url.latest_snapshot_headers %}
+        <div class="section">
+            <h3 class="collapsible" onclick="this.nextElementSibling.classList.toggle('hidden')">Latest HTTP headers (click to toggle)</h3>
+            <pre class="headers hidden">{{ url.latest_snapshot_headers }}</pre>
+        </div>
+        {% endif %}
+        {% endif %}
+
+        <!-- URL history -->
+        {% if url.history %}
+        <div class="section url-history">
+            <h3>Change history</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Changed at</th>
+                        <th>Field</th>
+                        <th>Old value</th>
+                        <th>New value</th>
+                        <th>By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in url.history %}
+                    <tr>
+                        <td>{{ h.changed_at or '-' }}</td>
+                        <td>{{ h.field }}</td>
+                        <td>{{ h.old_value or '-' }}</td>
+                        <td>{{ h.new_value or '-' }}</td>
+                        <td>{{ h.changed_by or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+    </div>
     <div class="buttons">
         {% if url.evaluated == 'yes' %}
         <form method="post">
