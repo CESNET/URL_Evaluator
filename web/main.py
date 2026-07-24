@@ -17,6 +17,7 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
+from common.db_helpers import update_url_field
 from common.utils import is_valid, get_domain
 
 # Global variables
@@ -309,7 +310,11 @@ def edit_detail():
             classification = flask.request.form['class']
             reason = flask.request.form['reason']
             evaluated = "yes" if classification != "unclassified" else "no"
-            db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            update_url_field(db, url, "note", note, changed_by=user)
+            update_url_field(db, url, "classification", classification, changed_by=user)
+            update_url_field(db, url, "classification_reason", reason, changed_by=user)
+            update_url_field(db, url, "evaluated", evaluated, changed_by=user)
+            update_url_field(db, url, "last_edit", user, changed_by=user)
             if classification == "malicious":
                 back_propagation(db, url)
             return redirect(url_for("list_all", show=show))
@@ -345,15 +350,18 @@ def bulk_edit_action():
     evaluated = "yes" if classification != "unclassified" else "no"
     urls_string = "('" + "', '".join(selected_urls) + "')"
     with SQLiteWrapper(config.db_path) as db:
-        if note:
-            db.execute(f"UPDATE urls SET note = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (note, user, evaluated))
-        if classification:
-            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
-        if classification_reason:
-            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+        for target_url in selected_urls:
+            if note:
+                update_url_field(db, target_url, "note", note, changed_by=user)
+            if classification:
+                update_url_field(db, target_url, "classification", classification, changed_by=user)
+            if classification_reason:
+                update_url_field(db, target_url, "classification_reason", classification_reason, changed_by=user)
+            update_url_field(db, target_url, "evaluated", evaluated, changed_by=user)
+            update_url_field(db, target_url, "last_edit", user, changed_by=user)
         if classification == "malicious":
-            for url in selected_urls:
-                back_propagation(db, url)
+            for target_url in selected_urls:
+                back_propagation(db, target_url)
     return redirect(url_for("list_all"))
 
 

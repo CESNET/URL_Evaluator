@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.db_helpers import persist_content_snapshot
+from common.db_helpers import persist_content_snapshot, update_url_field
 from common.utils import is_valid, extract_commands, process_new_session
 
 
@@ -327,11 +327,17 @@ if __name__ == "__main__":
                 continue
             logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
 
-            # Update DB record
-            items = list(result.items())
-            set_clause = ", ".join([f"{k} = ?" for k, _ in items])
-            params = tuple(v for _, v in items) + (url,)
-            db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
+            # Update DB record, recording field-level history for key values
+            tracked_fields = {"classification", "classification_reason", "note", "threat_label", "status", "eval_later"}
+            for field, value in result.items():
+                if field in tracked_fields:
+                    update_url_field(db, url, field, value, changed_by="system")
+                else:
+                    db.execute(f"UPDATE urls SET {field} = ? WHERE url = ?", (value, url))
+
+            # last_edit is set by the helper; set a timestamp for system edits too
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute("UPDATE urls SET last_edit = ? WHERE url = ?", (f"system ({now})", url))
 
             # If the URL was classified as malicious, mark all source URLs that led to it as malicious
             if result["classification"] == "malicious":

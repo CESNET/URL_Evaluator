@@ -29,6 +29,31 @@ def record_url_history(db, url, field, old_value, new_value, changed_by="system"
     )
 
 
+def update_url_field(db, url, field, new_value, changed_by="system"):
+    """
+    Update a single field in urls if the value changed, recording the change
+    in url_history via record_url_history.
+
+    The caller is responsible for committing.
+    Returns True if the value was updated, False if unchanged.
+    """
+    # Defensive: ensure the field exists in urls to prevent accidental SQL injection
+    info = db.execute("PRAGMA table_info(urls)").fetchall()
+    valid_fields = {row[1] for row in info}
+    if field not in valid_fields:
+        raise ValueError(f"Invalid URL field: {field}")
+
+    row = db.execute(f"SELECT {field} FROM urls WHERE url = ?", (url,)).fetchone()
+    old_value = row[0] if row else None
+
+    if old_value == new_value:
+        return False
+
+    db.execute(f"UPDATE urls SET {field} = ? WHERE url = ?", (new_value, url))
+    record_url_history(db, url, field, old_value, new_value, changed_by)
+    return True
+
+
 def set_url_latest_content(db, url, content_hash):
     """
     Mark content_hash as the latest snapshot for url.
