@@ -80,6 +80,8 @@ def create_object(db_row):
     status = db_row[6]
     classification = db_row[7]
     source = db_row[8]
+    latest_content_hash = db_row[9]
+    content_size = db_row[10]
     ip, domain = extract_ip_domain_port(url)
 
     new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
@@ -102,9 +104,17 @@ def create_object(db_row):
     if hash:
         new_object.add_attribute(object_relation="hash", simple_value=hash, Attribute={"type": "sha1", "value": hash})
 
+    # Add SHA-256 / latest content hash if present
+    if latest_content_hash:
+        new_object.add_attribute(object_relation="sha256", simple_value=latest_content_hash, Attribute={"type": "sha256", "value": latest_content_hash})
+
     # Add file type if present
     if file_mime_type:
         new_object.add_attribute(object_relation="mime-type", simple_value=file_mime_type, Attribute={"type": "mime-type", "value": file_mime_type})
+
+    # Add content size if present
+    if content_size is not None:
+        new_object.add_attribute(object_relation="size-in-bytes", simple_value=content_size, Attribute={"type": "size-in-bytes", "value": content_size})
 
     # Add threat label if present
     if threat_label:
@@ -155,11 +165,11 @@ def sync_urls(misp, db):
         u.threat_label,
         u.status,
         u.classification,
-        COALESCE(GROUP_CONCAT(us.source, ', '), 'Unknown')
+        COALESCE((SELECT GROUP_CONCAT(source, ', ') FROM (SELECT DISTINCT source FROM url_source WHERE url = u.url)), 'Unknown'),
+        u.latest_content_hash,
+        u.content_size
     FROM urls u
-    LEFT JOIN url_source us ON us.url = u.url
-    WHERE u.classification IN ('malicious', 'miner') AND u.last_seen >= ?
-    GROUP BY u.url;
+    WHERE u.classification IN ('malicious', 'miner') AND u.last_seen >= ?;
     """, (cutoff_date,)).fetchall()
     if not rows:
         logger.info("No malicious URLs")

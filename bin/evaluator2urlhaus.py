@@ -17,13 +17,17 @@ from common.db import SQLiteWrapper
 def evaluator2urlhaus():
     logger.info("Job started")
 
-    # Load active malicious URLs
+    # Load active malicious URLs with latest content hash / sha256
     with SQLiteWrapper(config.db_path) as db:
-        urls = db.execute("SELECT url FROM urls WHERE classification='malicious' AND status='active'").fetchall()
-    if not urls:
+        rows = db.execute("""
+            SELECT url, hash, latest_content_hash, file_mime_type, content_size
+            FROM urls
+            WHERE classification='malicious' AND status='active'
+        """).fetchall()
+    if not rows:
         logger.info("No URLs to send)")
         return
-    logger.info(f"Found {len(urls)} malicious URLs")
+    logger.info(f"Found {len(rows)} malicious URLs")
 
     # Load URLhaus blacklist
     content = requests.get(config.urlhaus_blacklist_url).content.decode("utf-8")
@@ -31,22 +35,36 @@ def evaluator2urlhaus():
 
     # Send URLs to URLhaus
     cnt_submissions = 0
-    for url in urls:
-        if url[0] in blacklist:
+    for row in rows:
+        url = row[0]
+        sha1 = row[1]
+        sha256 = row[2]
+        file_mime_type = row[3]
+        content_size = row[4]
+        if url in blacklist:
             continue  # do not send URLs that are already blacklisted
+        submission = {
+            'url': url,
+            'threat': 'malware_download'
+        }
+        if sha256:
+            submission['sha256'] = sha256
+        if sha1:
+            submission['sha1'] = sha1
+        if file_mime_type:
+            submission['content_type'] = file_mime_type
+        if content_size is not None:
+            submission['filesize'] = content_size
         json_data = {
             'token': config.urlhaus_key,
             'anonymous': '0',
-            'submission': [{
-                'url': url[0],
-                'threat': 'malware_download'
-            }]
+            'submission': [submission]
         }
         r = requests.post(config.urlhaus_submit_url, json=json_data, timeout=30, headers={"Content-Type": "application/json"})
         if r.status_code == 200:
             cnt_submissions += 1
 
-    logger.info(f"Sent {cnt_submissions} new submissions (out of {len(urls)} URLs)")
+    logger.info(f"Sent {cnt_submissions} new submissions (out of {len(rows)} URLs)")
     logger.info("Job finished")
 
 def sigint_handler(signum, frame):
