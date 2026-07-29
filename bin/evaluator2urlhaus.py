@@ -35,14 +35,13 @@ def evaluator2urlhaus():
         if url[0] in blacklist:
             continue  # do not send URLs that are already blacklisted
         json_data = {
-            'token': config.urlhaus_key,
             'anonymous': '0',
             'submission': [{
                 'url': url[0],
                 'threat': 'malware_download'
             }]
         }
-        r = requests.post(config.urlhaus_submit_url, json=json_data, timeout=30, headers={"Content-Type": "application/json"})
+        r = requests.post(config.urlhaus_submit_url, json=json_data, timeout=30, headers={"Content-Type": "application/json", "Auth-Key": config.urlhaus_key})
         if r.status_code == 200:
             cnt_submissions += 1
 
