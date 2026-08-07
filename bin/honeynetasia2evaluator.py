@@ -40,7 +40,14 @@ def honeynetasia2evaluator():
                     last_seen = excluded.last_seen,
                     occurrences = urls.occurrences + 1;
             """, (url, current_date, current_date, get_domain(url))).rowcount
-            record_url_source(db, url, "HoneyNet.Asia", observed_at=observed_at)
+            record_url_source(
+                db, url, "HoneyNet.Asia",
+                source_detail=config.hna_url,
+                origin_url=config.hna_url,
+                observed_at=observed_at,
+                idea_id=None,
+                session_hash=None,
+            )
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")
 
