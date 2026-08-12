@@ -91,6 +91,9 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
         return []
     url_domain = {url: get_domain(url) for url in extracted_urls}
 
+    if source == "Warden (unknown node)":
+        logger.info(f"URL(s) found in an event from unknown Warden node (ID: '{idea_id}')")
+
     # Store the session and contained URLs
     db.execute(
         """
