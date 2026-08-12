@@ -39,6 +39,43 @@
         {% endif %}
 
         <div class="content">
+        {% if active_tab == 'sources' %}
+        <!-- Sources tab: per-source (honeynet) observation statistics for this URL.
+             For URLs extracted from a script hosted on another URL, the "Derived from"
+             column links to the detail of the source URL the script was downloaded from,
+             which allows deriving the original source of the URL. -->
+        <table class="sources-table">
+            <thead>
+                <tr>
+                    <th>Honeynet</th>
+                    <th>First observed</th>
+                    <th>Last observed</th>
+                    <th class="num">Occurrences</th>
+                    <th>Derived from</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in url.source_rows %}
+                <tr>
+                    <td><span class="source-badge">{{ row[0] }}</span></td>
+                    <td>{{ row[1] if row[1] else '—' }}</td>
+                    <td>{{ row[2] if row[2] else '—' }}</td>
+                    <td class="num">{{ row[3] if row[3] is not none else '—' }}</td>
+                    <td>
+                        {% if row[4] %}
+                            <a class="src-url" href="{{ url_for('detail', url=row[4], show=show) }}" title="URL Evaluator detail of the source URL">{{ row[4] }}</a>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="empty">No sources recorded for this URL</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <!-- Overview tab (default) -->
         <table class="info">
             <tbody>
                 <tr>
@@ -207,9 +244,10 @@
             </dl>
         {% endif %}
 
+        {% endif %}
         </div>
 
-    </div> 
+    </div>
     <div class="buttons">
         {% if url.evaluated == 'yes' %}
         <form method="post">

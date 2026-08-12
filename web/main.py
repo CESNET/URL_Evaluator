@@ -247,32 +247,38 @@ class URLDetail:
         self.eval_later = url_detail[17]
         self.ip = get_ip(self.url)
         self.src = []
+        # per-source observation rows for the Sources tab:
+        # (source, first_seen, last_seen, occurrences, derived_from)
+        self.source_rows = []
         self.src_urls = []
         self.contained_urls = []
 
 
-def get_detail_menu(url, show=None):
+def get_detail_menu(url, show=None, counts=None):
     """Build the tab menu displayed under the URL on the detail page.
 
-    Badge counts are static placeholders for now (see the design mockup);
-    they will be computed from the new data model tables once implemented.
+    :param url: the URL whose detail page it is
+    :param show: optional "show" filter to keep in tab links
+    :param counts: optional dict mapping tab id -> badge count; tabs without
+                   an entry in the dict display no badge
     """
+    counts = counts or {}
     tabs = [
-        ("overview", "Overview", None),
-        ("content", "Content", 2),
-        ("sources", "Sources", 2),
-        ("sandbox", "Sandbox", 1),
-        ("class_history", "Class. History", 2),
+        ("overview", "Overview"),
+        ("content", "Content"),
+        ("sources", "Sources"),
+        ("sandbox", "Sandbox"),
+        ("class_history", "Class. History"),
     ]
     menu = []
-    for tab_id, label, count in tabs:
+    for tab_id, label in tabs:
         params = {"url": url, "tab": tab_id}
         if show:
             params["show"] = show
         menu.append({
             "id": tab_id,
             "label": label,
-            "count": count,
+            "count": counts.get(tab_id),
             "href": url_for("detail", **params),
         })
     return menu
@@ -293,6 +299,16 @@ def detail():
         # get url details
         url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
+        # per-source observation stats for the Sources tab (source, first_seen, last_seen, occurrences, derived_from)
+        # "derived_from" is the source URL this URL was extracted from (discovered_urls),
+        # which allows deriving the original source for URLs extracted from a script hosted on another URL
+        url_detail.source_rows = db.execute("""
+            SELECT us.source, us.first_seen, us.last_seen, us.occurrences,
+                   (SELECT du.src_url FROM discovered_urls du WHERE du.url = us.url LIMIT 1) AS derived_from
+            FROM url_source us
+            WHERE us.url = ?
+            ORDER BY us.source
+        """, (url,)).fetchall()
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
@@ -322,8 +338,8 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    # tab menu under the URL name (FE menu only for now, counts are placeholders)
-    menu = get_detail_menu(url, show)
+    # tab menu under the URL name; badge counts reflect real DB data where available
+    menu = get_detail_menu(url, show, counts={"sources": len(url_detail.source_rows)})
 
     return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab)
 

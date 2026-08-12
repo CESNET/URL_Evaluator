@@ -16,9 +16,12 @@ CREATE TABLE url_session
 
 CREATE TABLE url_source
 (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    url     TEXT REFERENCES urls(url),
-    source  TEXT,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    url            TEXT REFERENCES urls(url),
+    source         TEXT,
+    first_seen     DATE,
+    last_seen      DATE,
+    occurrences    INTEGER DEFAULT 1,
 
     CONSTRAINT url_source_unique UNIQUE (url, source)
 );
