@@ -251,11 +251,39 @@ class URLDetail:
         self.contained_urls = []
 
 
+def get_detail_menu(url, show=None):
+    """Build the tab menu displayed under the URL on the detail page.
+
+    Badge counts are static placeholders for now (see the design mockup);
+    they will be computed from the new data model tables once implemented.
+    """
+    tabs = [
+        ("overview", "Overview", None),
+        ("content", "Content", 2),
+        ("sources", "Sources", 2),
+        ("sandbox", "Sandbox", 1),
+        ("class_history", "Class. History", 2),
+    ]
+    menu = []
+    for tab_id, label, count in tabs:
+        params = {"url": url, "tab": tab_id}
+        if show:
+            params["show"] = show
+        menu.append({
+            "id": tab_id,
+            "label": label,
+            "count": count,
+            "href": url_for("detail", **params),
+        })
+    return menu
+
+
 @app.route('/detail', methods=['GET', 'POST'])
 def detail():
     user = get_user(flask.request.environ)
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
+    active_tab = flask.request.args.get('tab', 'overview')
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
@@ -294,7 +322,10 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for)
+    # tab menu under the URL name (FE menu only for now, counts are placeholders)
+    menu = get_detail_menu(url, show)
+
+    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab)
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
@@ -387,3 +418,7 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)
+
