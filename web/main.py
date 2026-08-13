@@ -7,9 +7,11 @@ import sys
 import argparse
 import logging
 import base64
+import json
+import io
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, send_file, abort
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -18,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, get_domain
+from common.content_storage import load_content
 
 # Global variables
 page = 1
@@ -245,6 +248,7 @@ class URLDetail:
         self.last_active = url_detail[15]
         self.last_edit = url_detail[16]
         self.eval_later = url_detail[17]
+        self.latest_content_hash = url_detail[18]
         self.ip = get_ip(self.url)
         self.src = []
         # per-source observation rows for the Sources tab:
@@ -252,6 +256,8 @@ class URLDetail:
         self.source_rows = []
         self.src_urls = []
         self.contained_urls = []
+        # content history rows for the Content tab (dicts; see detail())
+        self.content_rows = []
 
 
 def get_detail_menu(url, show=None, counts=None):
@@ -297,7 +303,38 @@ def detail():
             return redirect(url_for('detail', url=url))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later, latest_content_hash FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+
+        # Content history for the Content tab (newest first), with per-URL first/last seen
+        snapshots = db.execute("""
+            SELECT uc.content_hash, uc.first_seen, uc.last_seen, uc.is_latest,
+                   cs.downloaded_at, cs.http_status, cs.mime_type, cs.content_size,
+                   cs.storage_path, cs.sha1, cs.http_headers
+            FROM url_content uc
+            JOIN content_snapshot cs ON cs.content_hash = uc.content_hash
+            WHERE uc.url = ?
+            ORDER BY uc.first_seen DESC
+        """, (url,)).fetchall()
+
+        prev_hash = None
+        for content_hash, first_seen, last_seen, is_latest, downloaded_at, http_status, mime, csize, storage_path, sha1, http_headers in snapshots:
+            row = {
+                "hash": content_hash,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "downloaded_at": downloaded_at,
+                "http_status": http_status,
+                "mime": mime,
+                "size": csize,
+                "path": storage_path,  # serves as the download link target
+                "sha1": sha1,
+                "is_latest": is_latest == "yes",
+                "headers": json.loads(http_headers) if http_headers else None,
+            }
+            # Non-latest rows are "changed" when superseded by different (newer) content
+            row["changed"] = not row["is_latest"] and prev_hash is not None and prev_hash != content_hash
+            prev_hash = content_hash
+            url_detail.content_rows.append(row)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         # per-source observation stats for the Sources tab (source, first_seen, last_seen, occurrences, derived_from)
         # "derived_from" is the source URL this URL was extracted from (discovered_urls),
@@ -434,6 +471,35 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+@app.route('/content/download', methods=['GET'])
+def download_content():
+    """Serve a stored content blob by its SHA-256 hash."""
+    content_hash = flask.request.args.get('hash')
+    if not content_hash:
+        abort(404)
+    try:
+        data = load_content(config.content_storage_path, content_hash)
+    except FileNotFoundError:
+        abort(404)
+    return send_file(io.BytesIO(data), download_name=content_hash[:16], as_attachment=True)
+
+
+@app.route('/sandbox/request', methods=['POST'])
+def request_sandbox():
+    """Stub: record a sandbox analysis request for a content snapshot."""
+    user = get_user(flask.request.environ)
+    content_hash = flask.request.form.get('hash') or flask.request.args.get('hash')
+    url = flask.request.form.get('url') or flask.request.args.get('url')
+    if not content_hash:
+        abort(404)
+    with SQLiteWrapper(config.db_path) as db:
+        db.execute(
+            "INSERT INTO sandbox_job (content_hash, url, status, submitted_at, requested_by) VALUES (?, ?, 'pending', ?, ?)",
+            (content_hash, url, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'), user))
+    return redirect(url_for('detail', url=url, tab='sandbox'))
+
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)

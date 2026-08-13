@@ -39,7 +39,64 @@
         {% endif %}
 
         <div class="content">
-        {% if active_tab == 'sources' %}
+        {% if active_tab == 'content' %}
+        <!-- Content tab: history of downloaded content for this URL.
+             - File path column is a download link to the stored blob.
+             - Unchanged content shows merged, with its first_seen and last_seen.
+             - Changed content appears as a separate history entry flagged "content changed". -->
+        <table class="content-table">
+            <thead>
+                <tr>
+                    <th>First seen</th>
+                    <th>Last seen</th>
+                    <th>File path</th>
+                    <th>SHA-256</th>
+                    <th>Mime type</th>
+                    <th class="num">Size</th>
+                    <th>HTTP</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in url.content_rows %}
+                <tr class="{% if row.changed %}content-changed{% endif %}">
+                    <td>{{ row.first_seen or '—' }}</td>
+                    <td>{{ row.last_seen or '—' }}</td>
+                    <td>
+                        {% if row.path %}
+                            <a class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</a>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="hash" title="{{ row.hash }}">{{ row.hash[:16] }}…</td>
+                    <td>{{ row.mime or '—' }}</td>
+                    <td class="num">{{ row.size if row.size is not none else '—' }}</td>
+                    <td>{{ row.http_status or '—' }}</td>
+                    <td>
+                        {% if row.changed %}<span class="badge badge-changed">content changed</span>{% endif %}
+                    </td>
+                </tr>
+                    {% if row.headers %}
+                <tr class="content-headers-row">
+                    <td colspan="8">
+                        <details class="content-headers">
+                            <summary>HTTP response headers</summary>
+                            <dl>
+                                {% for k, v in row.headers.items() %}
+                                <div><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
+                                {% endfor %}
+                            </dl>
+                        </details>
+                    </td>
+                </tr>
+                    {% endif %}
+                {% else %}
+                <tr><td colspan="8" class="empty">No content downloaded for this URL yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% elif active_tab == 'sources' %}
         <!-- Sources tab: per-source (honeynet) observation statistics for this URL.
              For URLs extracted from a script hosted on another URL, the "Derived from"
              column links to the detail of the source URL the script was downloaded from,
