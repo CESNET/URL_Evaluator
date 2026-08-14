@@ -64,8 +64,7 @@
                     <td>{{ row.last_seen or '—' }}</td>
                     <td>
                         {% if row.path %}
-                            <a class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</a>
-                        {% else %}
+                            <p class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</p>
                             —
                         {% endif %}
                     </td>
