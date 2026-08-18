@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.db_helpers import persist_content_snapshot
+from common.db_helpers import persist_content_snapshot, update_url_field
 from common.utils import is_valid, extract_commands, process_new_session
 
 
@@ -411,29 +411,22 @@ if __name__ == "__main__":
     db = SQLiteWrapper(config.db_path)
 
     logger.info("Started")
-    # TEMP-TEST-HACK: tracks URLs already processed in the current pass
-    processed_urls = set()
     running_flag = True
     while running_flag:
-        # TEMP-TEST-HACK: re-evaluate every URL, even already-classified ones.
-        # Picks the NEWEST URL (first_seen DESC) that hasn't been picked during
-        # this run yet (tracked in the in-memory `processed_urls` set); once all
-        # URLs were processed, the set resets and the cycle repeats.
-        # Revert to the original filter below after testing.
-        # url = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
-        rows = db.execute("SELECT url FROM urls ORDER BY COALESCE(first_seen, '1970-01-01') DESC").fetchall()
-        all_urls = [r[0] for r in rows]
-        remaining = [u for u in all_urls if u not in processed_urls]
-        if not remaining:
-            processed_urls.clear()
-            remaining = all_urls
-        if not remaining:
+        # Pick the newest URL that hasn't been evaluated yet.
+        query = "SELECT url FROM urls WHERE evaluated = 'no'"
+        if vt_daily_quota_exceeded:
+            query += " AND eval_later = 'no'"
+        
+        query += " ORDER BY COALESCE(first_seen, '1970-01-01') DESC LIMIT 1"
+        
+        row = db.execute(query).fetchone()
+        if not row:
             logger.debug("No URLs to check, sleeping for 10 seconds")
             time.sleep(10)
             continue
-        url = "http://105.186.64.242:41071/i"
-        processed_urls.add(url)
-        logger.info(f"Processing URL {len(processed_urls)}/{len(all_urls)} in this pass: {url}")
+            
+        url = row[0]
 
         try:
             logger.debug(f"Evaluating {url}")
@@ -441,18 +434,22 @@ if __name__ == "__main__":
                 continue
             logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
 
-            # Update DB record
-            items = list(result.items())
-            set_clause = ", ".join([f"{k} = ?" for k, _ in items])
-            params = tuple(v for _, v in items) + (url,)
-            db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
+            # Update DB record — use update_url_field per field so that
+            # classification/classification_reason/note changes are recorded
+            # in classification_history (changed_by="system").
+            for field, value in result.items():
+                update_url_field(db, url, field, value, changed_by="system")
 
             # If the URL was classified as malicious, mark all source URLs that led to it as malicious
             if result["classification"] == "malicious":
-                src_rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-                if src_urls := ", ".join(f"'{row[0]}'" for row in src_rows):
-                    db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
-                    logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
+                rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+                if rows:
+                    src_url_list = []
+                    for (src_url,) in rows:
+                        update_url_field(db, src_url, "classification", "malicious", changed_by="system")
+                        update_url_field(db, src_url, "classification_reason", "Downloading from malicious URL", changed_by="system")
+                        src_url_list.append(src_url)
+                    logger.info(f"URLs {', '.join(src_url_list)} were classified as malicious because they downloaded content from a malicious URL ({url})")
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
 

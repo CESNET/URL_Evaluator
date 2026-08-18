@@ -66,6 +66,18 @@ def record_url_history(db, url, field, old_value, new_value, changed_by="system"
         """,
         (url, _now(), field, old_value, new_value, changed_by),
     )
+
+    # Also record in classification_history if the field was classification, classification_reason, or note
+    if field in ("classification", "classification_reason", "note"):
+        # For classification history, capture a snapshot of all three fields so
+        # the UI can clearly separate what is the reason and what is the note.
+        row = db.execute("SELECT classification, classification_reason, note FROM urls WHERE url = ?", (url,)).fetchone()
+        if row:
+            curr_class, curr_reason, curr_note = row
+            db.execute(
+                "INSERT INTO classification_history (url, changed_at, classification, reason, note, changed_by) VALUES (?, ?, ?, ?, ?, ?)",
+                (url, _now(), curr_class, (curr_reason or "").strip(), (curr_note or "").strip(), changed_by),
+            )
     return True
 
 

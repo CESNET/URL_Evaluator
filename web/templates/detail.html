@@ -39,7 +39,55 @@
         {% endif %}
 
         <div class="content">
-        {% if active_tab == 'content' %}
+        {% if active_tab == 'class_history' %}
+        <!-- Classification History tab: timeline of classifications.
+             Each card shows the timestamp, resulting classification, reason and
+             author on one line; any analyst note sits on its own sub-line so the
+             two are visually distinct. -->
+        <div class="class-history">
+            {% set grouped_history = [] %}
+            {% for row in class_history %}
+                {% if grouped_history and grouped_history[-1][0] == row[0] %}
+                    {% set last_item = grouped_history[-1] %}
+                    {% set updated_item = last_item ~ [row] %}
+                    {% set _ = grouped_history.pop() %}
+                    {% set _ = grouped_history.append(updated_item) %}
+                {% else %}
+                    {% set _ = grouped_history.append([row]) %}
+                {% endif %}
+            {% endfor %}
+
+            {% for group in grouped_history %}
+                {% set row = group[0] %}
+                {% set current_class = row[1] %}
+                {% set next_group = grouped_history[loop.index] if loop.index < grouped_history|length else none %}
+                {% set next_row = next_group[0] if next_group else none %}
+                {% set is_same_as_next = next_row and next_row[1] == current_class %}
+            <div class="class-history-item {% if is_same_as_next %}class-history-grouped{% endif %}">
+                <div class="class-history-meta">
+                    <span class="class-history-dot {{ row[1] }}" title="{{ row[1] }}"></span>
+                    <span class="class-history-date">{{ row[0] }} UTC</span>
+                    {% if not is_same_as_next %}
+                    <span class="class-history-class {{ row[1] }}">{{ row[1] }}</span>
+                    {% else %}
+                    <span class="class-history-arrow">➜</span>
+                    {% endif %}
+                    <span class="class-history-reason">{{ row[2] }}</span>
+                    <span class="class-history-user">{{ row[4] }}</span>
+                </div>
+                {% for item in group %}
+                    {% if item[3] %}
+                    <div class="class-history-note-line">
+                        <span class="class-history-note">{{ item[3] }}</span>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty">No classification history recorded.</div>
+            {% endfor %}
+        </div>
+        {% elif active_tab == 'content' %}
         <!-- Content tab: history of downloaded content for this URL.
              - File path column is a download link to the stored blob.
              - Unchanged content shows merged, with its first_seen and last_seen.

@@ -154,6 +154,127 @@
     border-radius: 10px;
 }
 
+/* --- Class. History tab --- */
+.detail .class-history {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 10px 0;
+}
+
+.detail .class-history-item {
+    position: relative;
+    padding-left: 30px;
+}
+
+.detail .class-history-item.class-history-grouped {
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+.detail .class-history-arrow {
+    font-weight: bold;
+    color: #818181;
+    font-size: small;
+    padding: 2px 8px;
+}
+
+
+
+.detail .class-history-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #e0e0e0;
+}
+
+.detail .class-history-item::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    top: 5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #ccc;
+    border: 2px solid #fff;
+}
+
+/* Color dots based on classification */
+.detail .class-history-item:has(.class-history-class.malicious)::after {
+    background-color: red;
+}
+.detail .class-history-item:has(.class-history-class.unclassified)::after {
+    background-color: blue;
+}
+.detail .class-history-item:has(.class-history-class.harmless)::after {
+    background-color: green;
+}
+
+.detail .class-history-meta {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+    font-family: monospace;
+}
+
+.detail .class-history-date {
+    color: #818181;
+    font-size: small;
+}
+
+.detail .class-history-class {
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: small;
+}
+
+.detail .class-history-class.malicious {
+    color: red;
+}
+.detail .class-history-class.unclassified {
+    color: blue;
+}
+.detail .class-history-class.harmless {
+    color: green;
+}
+
+.detail .class-history-user {
+    color: #818181;
+    font-size: small;
+}
+
+.detail .class-history-details {
+    display: flex;
+    font-size: small;
+    padding-left: 20px;
+    margin-top: 2px;
+}
+
+.detail .class-history-reason {
+    font-style: italic;
+    color: #555;
+}
+
+.detail .class-history-note {
+    color: #777;
+    font-style: normal;
+}
+
+.detail .reason-label, .detail .note-label {
+    font-weight: bold;
+    margin-right: 5px;
+    color: #333;
+    min-width: 160px;
+    display: inline-block;
+}
+
 .detail .classification p::before {
     display: inline-block;
     content: " ";

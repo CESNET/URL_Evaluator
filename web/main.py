@@ -305,6 +305,13 @@ def detail():
         # get url details
         url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later, latest_content_hash FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
 
+        # classification history for the Class. History tab;
+        # `reason` and `note` are stored separately so the UI can show each distinctly
+        class_history = db.execute(
+            "SELECT changed_at, classification, reason, note, changed_by FROM classification_history WHERE url = ? ORDER BY changed_at DESC",
+            (url,),
+        ).fetchall()
+
         # Content history for the Content tab (newest first), with per-URL first/last seen
         snapshots = db.execute("""
             SELECT uc.content_hash, uc.first_seen, uc.last_seen, uc.is_latest,
@@ -378,7 +385,7 @@ def detail():
     # tab menu under the URL name; badge counts reflect real DB data where available
     menu = get_detail_menu(url, show, counts={"sources": len(url_detail.source_rows)})
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab)
+    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab, class_history=class_history)
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
@@ -393,7 +400,15 @@ def edit_detail():
             classification = flask.request.form['class']
             reason = flask.request.form['reason']
             evaluated = "yes" if classification != "unclassified" else "no"
-            db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            # Use update_url_field to ensure record_url_history is called for each changed field
+            # this will trigger the insertion into classification_history table
+            from common.db_helpers import update_url_field
+            update_url_field(db, url, "note", note, changed_by=user)
+            update_url_field(db, url, "classification", classification, changed_by=user)
+            update_url_field(db, url, "classification_reason", reason, changed_by=user)
+            
+            # Update last_edit and evaluated separately as they might not be in URL_UPDATABLE_FIELDS or need different handling
+            db.execute("UPDATE urls SET last_edit = ?, evaluated = ? WHERE url = ?", (user, evaluated, url))
             if classification == "malicious":
                 back_propagation(db, url)
             return redirect(url_for("list_all", show=show))
@@ -429,12 +444,16 @@ def bulk_edit_action():
     evaluated = "yes" if classification != "unclassified" else "no"
     urls_string = "('" + "', '".join(selected_urls) + "')"
     with SQLiteWrapper(config.db_path) as db:
-        if note:
-            db.execute(f"UPDATE urls SET note = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (note, user, evaluated))
-        if classification:
-            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
-        if classification_reason:
-            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+        from common.db_helpers import update_url_field
+        for url in selected_urls:
+            if note:
+                update_url_field(db, url, "note", note, changed_by=user)
+            if classification:
+                update_url_field(db, url, "classification", classification, changed_by=user)
+            if classification_reason:
+                update_url_field(db, url, "classification_reason", classification_reason, changed_by=user)
+            
+            db.execute("UPDATE urls SET last_edit = ?, evaluated = ? WHERE url = ?", (user, evaluated, url))
         if classification == "malicious":
             for url in selected_urls:
                 back_propagation(db, url)
