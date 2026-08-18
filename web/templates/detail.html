@@ -23,7 +23,163 @@
                 onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
         </div>
 
+        {% if menu %}
+        <nav class="detail-menu">
+            <ul>
+                {% for item in menu %}
+                <li>
+                    <a class="detail-menu-item {% if active_tab == item.id %}active{% endif %}" href="{{ item.href }}">
+                        {{ item.label }}
+                        {% if item.count is not none %}<span class="detail-menu-badge">{{ item.count }}</span>{% endif %}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </nav>
+        {% endif %}
+
         <div class="content">
+        {% if active_tab == 'class_history' %}
+        <!-- Classification History tab: timeline of classifications.
+             Each card shows the timestamp, resulting classification, reason and
+             author on one line; any analyst note sits on its own sub-line so the
+             two are visually distinct. -->
+        <div class="class-history">
+            {% set grouped_history = [] %}
+            {% for row in class_history %}
+                {% if grouped_history and grouped_history[-1][0] == row[0] %}
+                    {% set last_item = grouped_history[-1] %}
+                    {% set updated_item = last_item ~ [row] %}
+                    {% set _ = grouped_history.pop() %}
+                    {% set _ = grouped_history.append(updated_item) %}
+                {% else %}
+                    {% set _ = grouped_history.append([row]) %}
+                {% endif %}
+            {% endfor %}
+
+            {% for group in grouped_history %}
+                {% set row = group[0] %}
+                {% set current_class = row[1] %}
+                {% set next_group = grouped_history[loop.index] if loop.index < grouped_history|length else none %}
+                {% set next_row = next_group[0] if next_group else none %}
+                {% set is_same_as_next = next_row and next_row[1] == current_class %}
+            <div class="class-history-item {% if is_same_as_next %}class-history-grouped{% endif %}">
+                <div class="class-history-meta">
+                    <span class="class-history-dot {{ row[1] }}" title="{{ row[1] }}"></span>
+                    <span class="class-history-date">{{ row[0] }} UTC</span>
+                    {% if not is_same_as_next %}
+                    <span class="class-history-class {{ row[1] }}">{{ row[1] }}</span>
+                    {% else %}
+                    <span class="class-history-arrow">➜</span>
+                    {% endif %}
+                    <span class="class-history-reason">{{ row[2] }}</span>
+                    <span class="class-history-user">{{ row[4] }}</span>
+                </div>
+                {% for item in group %}
+                    {% if item[3] %}
+                    <div class="class-history-note-line">
+                        <span class="class-history-note">{{ item[3] }}</span>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty">No classification history recorded.</div>
+            {% endfor %}
+        </div>
+        {% elif active_tab == 'content' %}
+        <!-- Content tab: history of downloaded content for this URL.
+             - File path column is a download link to the stored blob.
+             - Unchanged content shows merged, with its first_seen and last_seen.
+             - Changed content appears as a separate history entry flagged "content changed". -->
+        <table class="content-table">
+            <thead>
+                <tr>
+                    <th>First seen</th>
+                    <th>Last seen</th>
+                    <th>File path</th>
+                    <th>SHA-256</th>
+                    <th>Mime type</th>
+                    <th class="num">Size</th>
+                    <th>HTTP</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in url.content_rows %}
+                <tr class="{% if row.changed %}content-changed{% endif %}">
+                    <td>{{ row.first_seen or '—' }}</td>
+                    <td>{{ row.last_seen or '—' }}</td>
+                    <td>
+                        {% if row.path %}
+                            <p class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</p>
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="hash" title="{{ row.hash }}">{{ row.hash[:16] }}…</td>
+                    <td>{{ row.mime or '—' }}</td>
+                    <td class="num">{{ row.size if row.size is not none else '—' }}</td>
+                    <td>{{ row.http_status or '—' }}</td>
+                    <td>
+                        {% if row.changed %}<span class="badge badge-changed">content changed</span>{% endif %}
+                    </td>
+                </tr>
+                    {% if row.headers %}
+                <tr class="content-headers-row">
+                    <td colspan="8">
+                        <details class="content-headers">
+                            <summary>HTTP response headers</summary>
+                            <dl>
+                                {% for k, v in row.headers.items() %}
+                                <div><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
+                                {% endfor %}
+                            </dl>
+                        </details>
+                    </td>
+                </tr>
+                    {% endif %}
+                {% else %}
+                <tr><td colspan="8" class="empty">No content downloaded for this URL yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% elif active_tab == 'sources' %}
+        <!-- Sources tab: per-source (honeynet) observation statistics for this URL.
+             For URLs extracted from a script hosted on another URL, the "Derived from"
+             column links to the detail of the source URL the script was downloaded from,
+             which allows deriving the original source of the URL. -->
+        <table class="sources-table">
+            <thead>
+                <tr>
+                    <th>Honeynet</th>
+                    <th>First observed</th>
+                    <th>Last observed</th>
+                    <th class="num">Occurrences</th>
+                    <th>Derived from</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in url.source_rows %}
+                <tr>
+                    <td><span class="source-badge">{{ row[0] }}</span></td>
+                    <td>{{ row[1] if row[1] else '—' }}</td>
+                    <td>{{ row[2] if row[2] else '—' }}</td>
+                    <td class="num">{{ row[3] if row[3] is not none else '—' }}</td>
+                    <td>
+                        {% if row[4] %}
+                            <a class="src-url" href="{{ url_for('detail', url=row[4], show=show) }}" title="URL Evaluator detail of the source URL">{{ row[4] }}</a>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="empty">No sources recorded for this URL</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <!-- Overview tab (default) -->
         <table class="info">
             <tbody>
                 <tr>
@@ -192,9 +348,10 @@
             </dl>
         {% endif %}
 
+        {% endif %}
         </div>
 
-    </div> 
+    </div>
     <div class="buttons">
         {% if url.evaluated == 'yes' %}
         <form method="post">

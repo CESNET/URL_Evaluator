@@ -37,6 +37,15 @@ max_age_invalid: 7 # days
 # Max size of downloaded content
 max_file_size: 100 # MB
 
+# Base directory for downloaded content snapshots (deduplicated file storage)
+content_storage_path: "/data/url_evaluator/content"
+
+# Optional soft limit / warning threshold for total content storage (GB); 0 disables
+max_storage_size_gb: 0
+
+# Placeholder list of sandbox providers for future integration
+sandbox_providers: []
+
 # How often should evaluation blacklist be updated
 bl_update_time: 15 # minutes
 

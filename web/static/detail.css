@@ -16,6 +16,56 @@
     overflow-wrap: anywhere;
 }
 
+/* --- tab menu under the URL name --- */
+.detail .detail-menu {
+    margin: 0 20px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.detail .detail-menu ul {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.detail .detail-menu-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin-bottom: -2px;
+    color: #818181;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+}
+
+.detail .detail-menu-item:hover {
+    color: #00838f;
+}
+
+.detail .detail-menu-item.active {
+    color: #00acc1;
+    font-weight: bold;
+    border-bottom: 2px solid #00acc1;
+}
+
+.detail .detail-menu-badge {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    line-height: 20px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: normal;
+    color: white;
+    background-color: #9e9e9e;
+    border-radius: 4px;
+}
+
 .detail .status {
     font-weight: bold;
 }
@@ -102,6 +152,127 @@
     background-color: #f5f5f5;
     padding: 20px;
     border-radius: 10px;
+}
+
+/* --- Class. History tab --- */
+.detail .class-history {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 10px 0;
+}
+
+.detail .class-history-item {
+    position: relative;
+    padding-left: 30px;
+}
+
+.detail .class-history-item.class-history-grouped {
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+.detail .class-history-arrow {
+    font-weight: bold;
+    color: #818181;
+    font-size: small;
+    padding: 2px 8px;
+}
+
+
+
+.detail .class-history-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #e0e0e0;
+}
+
+.detail .class-history-item::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    top: 5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #ccc;
+    border: 2px solid #fff;
+}
+
+/* Color dots based on classification */
+.detail .class-history-item:has(.class-history-class.malicious)::after {
+    background-color: red;
+}
+.detail .class-history-item:has(.class-history-class.unclassified)::after {
+    background-color: blue;
+}
+.detail .class-history-item:has(.class-history-class.harmless)::after {
+    background-color: green;
+}
+
+.detail .class-history-meta {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+    font-family: monospace;
+}
+
+.detail .class-history-date {
+    color: #818181;
+    font-size: small;
+}
+
+.detail .class-history-class {
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: small;
+}
+
+.detail .class-history-class.malicious {
+    color: red;
+}
+.detail .class-history-class.unclassified {
+    color: blue;
+}
+.detail .class-history-class.harmless {
+    color: green;
+}
+
+.detail .class-history-user {
+    color: #818181;
+    font-size: small;
+}
+
+.detail .class-history-details {
+    display: flex;
+    font-size: small;
+    padding-left: 20px;
+    margin-top: 2px;
+}
+
+.detail .class-history-reason {
+    font-style: italic;
+    color: #555;
+}
+
+.detail .class-history-note {
+    color: #777;
+    font-style: normal;
+}
+
+.detail .reason-label, .detail .note-label {
+    font-weight: bold;
+    margin-right: 5px;
+    color: #333;
+    min-width: 160px;
+    display: inline-block;
 }
 
 .detail .classification p::before {
@@ -209,6 +380,51 @@
     padding-left: 20px !important;
 }
 
+/* --- Sources tab table --- */
+.detail .sources-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.detail .sources-table th {
+    text-align: left;
+    color: #818181;
+    font-weight: normal;
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.detail .sources-table td {
+    padding: 10px 12px 10px 0;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+}
+
+.detail .sources-table th.num,
+.detail .sources-table td.num {
+    text-align: right;
+}
+
+.detail .sources-table td.empty {
+    color: #818181;
+    text-align: center;
+    padding: 20px 0;
+}
+
+.detail .source-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+    font-size: small;
+}
+
+.detail .sources-table a.src-url {
+    text-decoration: underline;
+    color: grey;
+    overflow-wrap: anywhere;
+}
+
 .detail .list-urls {
     background-color: #f8f8f8;
     border: 1px solid #ddd;
@@ -217,4 +433,98 @@
     max-height: 100px;
     overflow: scroll;
     /* margin: 10px; */
+}
+
+/* --- Content tab table --- */
+.detail .content-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.detail .content-table th {
+    text-align: left;
+    color: #818181;
+    font-weight: normal;
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.detail .content-table td {
+    padding: 10px 12px 10px 0;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+}
+
+.detail .content-table th.num,
+.detail .content-table td.num {
+    text-align: right;
+}
+
+.detail .content-table td.hash {
+    font-family: "Lucida Console", "Courier New", monospace;
+    font-size: smaller;
+    white-space: nowrap;
+}
+
+.detail .content-table td.empty {
+    color: #818181;
+    text-align: center;
+    padding: 20px 0;
+}
+
+/* File path download link */
+.detail .content-table a.content-download {
+    text-decoration: underline;
+    color: #00acc1;
+    overflow-wrap: anywhere;
+}
+
+/* "content changed" badge + highlighted row */
+.detail .content-table tr.content-changed td {
+    background-color: #fff4e5;
+}
+
+.detail .badge-changed {
+    display: inline-block;
+    padding: 2px 10px;
+    background-color: #f0a83c;
+    color: #fff;
+    border-radius: 12px;
+    font-size: small;
+    white-space: nowrap;
+}
+
+/* Collapsible HTTP headers */
+.detail .content-headers-row td {
+    padding-top: 0;
+    background-color: #fafafa;
+}
+
+.detail .content-headers summary {
+    cursor: pointer;
+    color: #818181;
+    font-size: small;
+}
+
+.detail .content-headers dl {
+    margin: 8px 0 0 0;
+    font-size: small;
+}
+
+.detail .content-headers dl div {
+    display: flex;
+    padding: 2px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.detail .content-headers dt {
+    font-weight: bold;
+    min-width: 220px;
+    color: #555;
+    margin-left: 0;
+}
+
+.detail .content-headers dd {
+    margin: 0;
+    overflow-wrap: anywhere;
 }
