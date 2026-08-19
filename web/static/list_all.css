@@ -352,3 +352,104 @@ select {
 .add-response.success {
   background-color: rgba(104, 228, 104, 0.849);
 }
+
+/* ---------------------------------------------------------------- */
+/* Quick URL search in the top button panel                          */
+/* ---------------------------------------------------------------- */
+
+#quick-search-wrap {
+  position: relative;
+  display: inline-block;
+  margin: 10px;
+  margin-bottom: 0;
+}
+
+#quick-url-search {
+  width: 260px;
+  padding: 6px 10px;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  font-size: 14px;
+  background-color: #fff;
+}
+
+#quick-url-search:focus {
+  outline: none;
+  border-color: #555;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.12);
+}
+
+.quick-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.qs-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid #eee;
+}
+
+.qs-item:last-child {
+  border-bottom: none;
+}
+
+.qs-item:hover,
+.qs-item.qs-active {
+  background-color: #f0f0f0;
+}
+
+.qs-item.qs-empty {
+  color: #888;
+  cursor: default;
+  font-style: italic;
+}
+
+.qs-item.qs-empty:hover {
+  background-color: transparent;
+}
+
+.qs-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.qs-url mark {
+  background-color: #ffe58a;
+  padding: 0;
+}
+
+.qs-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  background-color: #ddd;
+  color: #333;
+}
+
+.qs-badge.qs-malicious     { background-color: #e74c3c; color: #fff; }
+.qs-badge.qs-harmless      { background-color: #2ecc71; color: #fff; }
+.qs-badge.qs-unclassified  { background-color: #f39c12; color: #fff; }
+.qs-badge.qs-unreachable   { background-color: #95a5a6; color: #fff; }
+.qs-badge.qs-invalid       { background-color: #7f8c8d; color: #fff; }
+.qs-badge.qs-miner         { background-color: #9b59b6; color: #fff; }

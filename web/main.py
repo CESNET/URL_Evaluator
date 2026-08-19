@@ -503,6 +503,26 @@ def bulk_edit_action():
     return redirect(url_for("list_all"))
 
 
+@app.route('/api/search_url', methods=['GET'])
+def api_search_url():
+    """Lightweight live search endpoint — returns up to 15 URLs matching the
+    query substring. Used by the quick-search input in the top panel."""
+    q = (flask.request.args.get('q') or '').strip()
+    if not q:
+        return make_response(jsonify({'results': []}), 200)
+    # escape LIKE wildcards in user input so searching for e.g. "%" doesn't
+    # blow up into a full table scan
+    q_escaped = q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    with SQLiteWrapper(config.db_path) as db:
+        rows = db.execute(
+            "SELECT url, classification, status FROM urls WHERE url LIKE ? ESCAPE '\\' LIMIT 15",
+            (f"%{q_escaped}%",)
+        ).fetchall()
+    return make_response(jsonify({'results': [
+        {'url': r[0], 'classification': r[1], 'status': r[2]} for r in rows
+    ]}), 200)
+
+
 @app.route('/api/url_stats', methods=['GET'])
 def api_url_stats():
     try:
