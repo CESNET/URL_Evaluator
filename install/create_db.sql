@@ -120,6 +120,9 @@ CREATE TABLE url_history
 );
 
 -- Prepared for future sandbox integration; UI exposes a "request analysis" stub.
+-- mime_type + content_size snapshot the metadata of the submitted content at
+-- the time of submission so the UI can display exactly what was sent, even if
+-- the underlying content_snapshot row is later superseded for the URL.
 CREATE TABLE sandbox_job
 (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +135,9 @@ CREATE TABLE sandbox_job
     completed_at DATETIME,
     report_url   TEXT,
     report_json  TEXT,
-    requested_by TEXT
+    requested_by TEXT,
+    mime_type    TEXT,
+    content_size INTEGER
 );
 
 -- ----------------------------------------------------------------------------

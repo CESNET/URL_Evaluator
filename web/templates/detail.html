@@ -91,7 +91,9 @@
         <!-- Content tab: history of downloaded content for this URL.
              - File path column is a download link to the stored blob.
              - Unchanged content shows merged, with its first_seen and last_seen.
-             - Changed content appears as a separate history entry flagged "content changed". -->
+             - Changed content appears as a separate history entry flagged "content changed".
+             - The rightmost "Sandbox" badge tells at a glance whether the row's
+             content hash has ever been sent to a sandbox (links to Sandbox tab). -->
         <table class="content-table">
             <thead>
                 <tr>
@@ -102,17 +104,19 @@
                     <th>Mime type</th>
                     <th class="num">Size</th>
                     <th>HTTP</th>
+                    <th>Sandbox</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 {% for row in url.content_rows %}
-                <tr class="{% if row.changed %}content-changed{% endif %}">
+                <tr id="content-{{ row.hash[:16] }}" class="{% if row.changed %}content-changed{% endif %}">
                     <td>{{ row.first_seen or '—' }}</td>
                     <td>{{ row.last_seen or '—' }}</td>
                     <td>
                         {% if row.path %}
-                            <p class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</p>
+                        <a class="content-download" href="{{ url_for('download_content', hash=row.hash) }}" title="Download stored content">{{ row.path }}</a>
+                        {% else %}
                             —
                         {% endif %}
                     </td>
@@ -121,12 +125,19 @@
                     <td class="num">{{ row.size if row.size is not none else '—' }}</td>
                     <td>{{ row.http_status or '—' }}</td>
                     <td>
+                        {% if row.hash in url.content_hashes_with_sandbox %}
+                        <a class="sandbox-badge sandbox-yes" href="{{ url_for('detail', url=url.url, tab='sandbox', show=show) }}" title="Sandbox analysis available – open the Sandbox tab">analysis</a>
+                        {% else %}
+                        <span class="sandbox-badge sandbox-none" title="No sandbox analysis for this content">none</span>
+                        {% endif %}
+                    </td>
+                    <td>
                         {% if row.changed %}<span class="badge badge-changed">content changed</span>{% endif %}
                     </td>
                 </tr>
                     {% if row.headers %}
                 <tr class="content-headers-row">
-                    <td colspan="8">
+                    <td colspan="9">
                         <details class="content-headers">
                             <summary>HTTP response headers</summary>
                             <dl>
@@ -139,10 +150,95 @@
                 </tr>
                     {% endif %}
                 {% else %}
-                <tr><td colspan="8" class="empty">No content downloaded for this URL yet.</td></tr>
+                <tr><td colspan="9" class="empty">No content downloaded for this URL yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% elif active_tab == 'sandbox' %}
+        <!-- Sandbox tab: submit current/any content snapshot to an external
+             sandbox and browse past submissions. Each card shows the provider,
+             submitted metadata and a link back to the submitted content on the
+             Content tab. -->
+        <div class="sandbox">
+            <div class="sandbox-submit">
+                <div class="sandbox-submit-title">Submit to sandbox for analysis</div>
+                <div class="sandbox-submit-buttons">
+                    {% set latest = url.content_rows[0] if url.content_rows else none %}
+                    {% if latest %}
+                        <form method="post" action="{{ url_for('request_sandbox') }}">
+                            <input type="hidden" name="url" value="{{ url.url }}">
+                            <input type="hidden" name="hash" value="{{ latest.hash }}">
+                            <input type="hidden" name="provider" value="PSNC Sandbox">
+                            <button type="submit" class="sandbox-btn">Submit to PSNC Sandbox</button>
+                        </form>
+                        <form method="post" action="{{ url_for('request_sandbox') }}">
+                            <input type="hidden" name="url" value="{{ url.url }}">
+                            <input type="hidden" name="hash" value="{{ latest.hash }}">
+                            <input type="hidden" name="provider" value="VirusTotal">
+                            <button type="submit" class="sandbox-btn">Submit to VirusTotal</button>
+                        </form>
+                        <form method="post" action="{{ url_for('request_sandbox') }}">
+                            <input type="hidden" name="url" value="{{ url.url }}">
+                            <input type="hidden" name="hash" value="{{ latest.hash }}">
+                            <input type="hidden" name="provider" value="Any.run">
+                            <button type="submit" class="sandbox-btn">Submit to Any.run</button>
+                        </form>
+                    {% else %}
+                        <p class="sandbox-note">No content snapshot available yet – cannot submit.</p>
+                    {% endif %}
+                </div>
+                <div class="sandbox-submit-note">The latest available content snapshot will be submitted.</div>
+            </div>
+
+            {% for job in url.sandbox_jobs %}
+            <div class="sandbox-card">
+                <div class="sandbox-card-header">
+                    <span class="sandbox-card-title">{{ job.provider or 'Sandbox' }}</span>
+                    {% set status_label = 'done' if job.status in ('completed', 'done') else job.status %}
+                    <span class="sandbox-status sandbox-status-{{ status_label }}">{{ status_label }}</span>
+                </div>
+                <dl class="sandbox-card-body">
+                    <div class="sandbox-row">
+                        <dt>Submitted</dt>
+                        <dd>{{ job.submitted_at or '—' }}{% if job.submitted_at %} UTC{% endif %}</dd>
+                    </div>
+                    <div class="sandbox-row">
+                        <dt>By</dt>
+                        <dd>{{ job.requested_by or '—' }}</dd>
+                    </div>
+                    {% if job.content_hash %}
+                    <div class="sandbox-row">
+                        <dt>Content</dt>
+                        <dd>
+                            <a class="sandbox-hash" href="{{ url_for('detail', url=url.url, tab='content', show=show) }}#content-{{ job.content_hash[:16] }}" title="Open this content snapshot in the Content tab"><code>{{ job.content_hash }}</code></a>
+                            {% if job.mime_type or job.content_size is not none %}
+                            <span class="sandbox-hash-meta">
+                                {% if job.mime_type %}{{ job.mime_type }}{% endif %}
+                                {% if job.content_size is not none %}· {{ job.content_size }} bytes{% endif %}
+                            </span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% set verdict = job.report_json.get('verdict') if job.report_json and job.report_json.get('verdict') else None %}
+                    {% if verdict %}
+                    <div class="sandbox-row">
+                        <dt>Verdict</dt>
+                        <dd><span class="sandbox-verdict sandbox-verdict-{{ verdict }}">{{ verdict }}</span></dd>
+                    </div>
+                    {% endif %}
+                    {% if job.report_url %}
+                    <div class="sandbox-row">
+                        <dt>Report</dt>
+                        <dd><a class="sandbox-report-link" href="{{ job.report_url }}" target="_blank" rel="noopener">View full report →</a></dd>
+                    </div>
+                    {% endif %}
+                </dl>
+            </div>
+            {% else %}
+            <div class="empty">No sandbox submissions yet.</div>
+            {% endfor %}
+        </div>
         {% elif active_tab == 'sources' %}
         <!-- Sources tab: per-source (honeynet) observation statistics for this URL.
              For URLs extracted from a script hosted on another URL, the "Derived from"

@@ -258,6 +258,11 @@ class URLDetail:
         self.contained_urls = []
         # content history rows for the Content tab (dicts; see detail())
         self.content_rows = []
+        # sandbox jobs for the Sandbox tab (dicts keyed on the sandbox_job row)
+        self.sandbox_jobs = []
+        # set of content hashes that already have a sandbox job (used by the
+        # Content tab to mark rows that have any associated sandbox analysis)
+        self.content_hashes_with_sandbox = set()
 
 
 def get_detail_menu(url, show=None, counts=None):
@@ -342,6 +347,39 @@ def detail():
             row["changed"] = not row["is_latest"] and prev_hash is not None and prev_hash != content_hash
             prev_hash = content_hash
             url_detail.content_rows.append(row)
+        # Sandbox jobs for the Sandbox tab (newest first). The LEFT JOIN pulls
+        # the snapshot metadata as a fallback when the job hasn't snapped it
+        # into its own mime_type/content_size columns yet (legacy rows).
+        sandbox_rows = db.execute("""
+            SELECT sj.id, sj.content_hash, sj.provider, sj.external_id, sj.status,
+                   sj.submitted_at, sj.completed_at, sj.report_url, sj.report_json,
+                   sj.requested_by,
+                   COALESCE(sj.mime_type, cs.mime_type)   AS mime_type,
+                   COALESCE(sj.content_size, cs.content_size) AS content_size
+            FROM sandbox_job sj
+            LEFT JOIN content_snapshot cs ON cs.content_hash = sj.content_hash
+            WHERE sj.url = ?
+            ORDER BY sj.submitted_at DESC, sj.id DESC
+        """, (url,)).fetchall()
+        for row in sandbox_rows:
+            url_detail.sandbox_jobs.append({
+                "id": row[0],
+                "content_hash": row[1],
+                "provider": row[2] or "PSNC Sandbox",
+                "external_id": row[3],
+                "status": row[4] or "pending",
+                "submitted_at": row[5],
+                "completed_at": row[6],
+                "report_url": row[7],
+                "report_json": json.loads(row[8]) if row[8] else None,
+                "requested_by": row[9],
+                "mime_type": row[10],
+                "content_size": row[11],
+            })
+        url_detail.content_hashes_with_sandbox = {
+            j["content_hash"] for j in url_detail.sandbox_jobs if j["content_hash"]
+        }
+
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         # per-source observation stats for the Sources tab (source, first_seen, last_seen, occurrences, derived_from)
         # "derived_from" is the source URL this URL was extracted from (discovered_urls),
@@ -383,7 +421,12 @@ def detail():
     }
 
     # tab menu under the URL name; badge counts reflect real DB data where available
-    menu = get_detail_menu(url, show, counts={"sources": len(url_detail.source_rows)})
+    menu = get_detail_menu(url, show, counts={
+        "content": len(url_detail.content_rows),
+        "sources": len(url_detail.source_rows),
+        "sandbox": len(url_detail.sandbox_jobs),
+        "class_history": len(class_history),
+    })
 
     return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab, class_history=class_history)
 
@@ -507,16 +550,32 @@ def download_content():
 
 @app.route('/sandbox/request', methods=['POST'])
 def request_sandbox():
-    """Stub: record a sandbox analysis request for a content snapshot."""
+    """Record a sandbox analysis request for a content snapshot.
+
+    Copies the snapshot's mime_type/content_size onto the job so the Sandbox
+    tab can show exactly what was submitted even if the underlying snapshot
+    row is later superseded.
+    """
     user = get_user(flask.request.environ)
     content_hash = flask.request.form.get('hash') or flask.request.args.get('hash')
     url = flask.request.form.get('url') or flask.request.args.get('url')
+    provider = flask.request.form.get('provider') or flask.request.args.get('provider') or 'PSNC Sandbox'
     if not content_hash:
         abort(404)
     with SQLiteWrapper(config.db_path) as db:
+        snap = db.execute(
+            "SELECT mime_type, content_size FROM content_snapshot WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+        mime_type = snap[0] if snap else None
+        content_size = snap[1] if snap else None
         db.execute(
-            "INSERT INTO sandbox_job (content_hash, url, status, submitted_at, requested_by) VALUES (?, ?, 'pending', ?, ?)",
-            (content_hash, url, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'), user))
+            """INSERT INTO sandbox_job
+                   (content_hash, url, provider, status, submitted_at, requested_by, mime_type, content_size)
+               VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (content_hash, url, provider,
+             datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+             user, mime_type, content_size))
     return redirect(url_for('detail', url=url, tab='sandbox'))
 
 
