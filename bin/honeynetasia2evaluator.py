@@ -6,6 +6,7 @@ import sys
 import requests
 import logging
 import signal
+import re
 from datetime import datetime
 from apscheduler.schedulers.background import BlockingScheduler
 
@@ -29,7 +30,9 @@ def honeynetasia2evaluator():
     num_inserted = 0
     with SQLiteWrapper(config.db_path) as db:
         for line in response.content.splitlines():
-            url = line.decode().strip().replace("hxxp://", "http://")
+            url = line.decode().strip()
+            # de-sanitize hxxp(s) -> http(s)
+            url = re.sub(r'^hxxp(s?)://', r'http\1://')
             if not is_valid(url):
                 logger.warning(f"Invalid URL '{url}' skipped")
                 continue
