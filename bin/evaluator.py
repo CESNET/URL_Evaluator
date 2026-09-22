@@ -95,7 +95,7 @@ def search_for_nested_urls(content, src_url):
     try:
         decoded_content = content.decode("utf-8")
         if session := extract_commands(decoded_content):
-            if new_urls := process_new_session(db, config, session, None, datetime.now(timezone.utc).isoformat(), "URL content", src_url):
+            if new_urls := process_new_session(db, config, session, None, datetime.now(timezone.utc).isoformat(), "URL content", src_url, None):
                 logger.info(f"{len(new_urls)} new URLs found in a shell script downloaded from {src_url}: {new_urls}")
     except UnicodeDecodeError:
         return

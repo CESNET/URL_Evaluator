@@ -55,3 +55,28 @@ CREATE TABLE urls
     eval_later            TEXT DEFAULT 'no' CHECK (eval_later IN ('yes', 'no')),
     domain                TEXT
 );
+
+-- Detailed log of every URL observation: WHERE it was seen (source pipeline + honeynet node) and WHEN
+CREATE TABLE observations
+(
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    url         TEXT NOT NULL REFERENCES urls(url),
+    source      TEXT NOT NULL,
+    honeynet    TEXT,
+    session     TEXT REFERENCES sessions(session_hash),
+    observed_at TEXT NOT NULL,
+    -- NULL-normalized dedupe key: UNIQUE on NULLable columns does not dedupe in SQLite,
+    -- so idempotent INSERT OR IGNORE relies on this generated key instead
+    dedupe_key  TEXT GENERATED ALWAYS AS (
+                    IFNULL(url, '') || char(31) || IFNULL(source, '') || char(31) ||
+                    IFNULL(honeynet, '') || char(31) || IFNULL(session, '') || char(31) ||
+                    IFNULL(observed_at, '')
+                ) STORED
+);
+
+CREATE UNIQUE INDEX idx_observations_dedupe ON observations(dedupe_key);
+CREATE INDEX idx_observations_url           ON observations(url);
+CREATE INDEX idx_observations_source        ON observations(source);
+CREATE INDEX idx_observations_honeynet      ON observations(honeynet);
+CREATE INDEX idx_observations_session       ON observations(session);
+CREATE INDEX idx_observations_observed_at   ON observations(observed_at);

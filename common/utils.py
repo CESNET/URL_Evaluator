@@ -72,7 +72,7 @@ def get_domain(url: str):
         return None
 
 
-def process_new_session(db, config, session, idea_id, detect_time, source, source_url):
+def process_new_session(db, config, session, idea_id, detect_time, source, source_url, honeynet=None):
     """
     Process a new session:
       1. Extract URLs from shell commands and store them into the DB
@@ -80,6 +80,11 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
          - check the number of occurrences of the same URL, if a threshold is exceeded the URL is classified as harmless
          - check the number of URLs from the same domain, if a threshold is exceeded all such URLs are deleted
     Returns a list of inserted URLs
+
+    `source` identifies the ingest collector/pipeline (e.g. 'Warden', 'GEANT T-Pot'),
+    while the optional `honeynet` identifies the physical honeynet node that captured
+    the session (e.g. 'CESNET Hugo', 'CZ.NIC HaaS'). Each extracted URL is logged as
+    an observation recording where (source/honeynet/session) and when it was seen.
     """
 
     inserted_urls = []
@@ -104,6 +109,10 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
     for url, occurrences in Counter(extracted_urls).items():
         db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
         db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+        db.execute(
+            "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+            (url, source, honeynet, session_hash, detect_time)
+        )
         if source_url:
             db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
         db.execute(
