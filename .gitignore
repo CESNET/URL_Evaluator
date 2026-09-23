@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# ignroe my personal notes and my often use commands help file
+notes_commands_cheat_sheet/
