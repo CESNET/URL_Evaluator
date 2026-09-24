@@ -108,7 +108,7 @@
     for (let i = 0; i < list.length; i++) {
       urls.push(list[i].value);
     }
-  
+
     var listString = JSON.stringify(urls);
 
     localStorage.setItem('selectedURLs', listString);
@@ -151,7 +151,7 @@
       localStorage.removeItem('selectedURLs');
       localStorage.removeItem('selectActive');
       console.log('List loaded');
-      
+
   }
 
   function activeSelect() {
@@ -200,3 +200,142 @@ function toggleHelp(element) {
     }
 }
 
+// ----------------------------------------------------------------
+// Quick URL search (top panel) - live results while typing
+// ----------------------------------------------------------------
+(function () {
+  var DEBOUNCE_MS = 200;
+  var AMP = String.fromCharCode(38);
+
+  function escapeHtml(s) {
+    return String(s)
+      .split('&').join(AMP + 'amp;')
+      .split('<').join(AMP + 'lt;')
+      .split('>').join(AMP + 'gt;')
+      .split('"').join(AMP + 'quot;')
+      .split("'").join(AMP + '#39;');
+  }
+
+  function initQuickSearch() {
+    var input = document.getElementById('quick-url-search');
+    var resultsBox = document.getElementById('quick-search-results');
+    if (!input || !resultsBox) return;
+
+    var debounceTimer = null;
+    var activeIndex = -1;
+    var currentResults = [];
+
+    function hideResults() {
+      resultsBox.style.display = 'none';
+      resultsBox.innerHTML = '';
+      activeIndex = -1;
+      currentResults = [];
+    }
+
+    function highlightMatch(url, query) {
+      var idx = url.toLowerCase().indexOf(query.toLowerCase());
+      if (idx === -1) return escapeHtml(url);
+      return escapeHtml(url.slice(0, idx)) +
+             '<mark>' + escapeHtml(url.slice(idx, idx + query.length)) + '</mark>' +
+             escapeHtml(url.slice(idx + query.length));
+    }
+
+    function renderResults(results, query) {
+      currentResults = results;
+      activeIndex = -1;
+      if (!results.length) {
+        resultsBox.innerHTML = '<div class="qs-item qs-empty">No matching URLs</div>';
+        resultsBox.style.display = 'block';
+        return;
+      }
+      resultsBox.innerHTML = results.map(function (r, i) {
+        var cls = (r.classification || 'unclassified');
+        return '<div class="qs-item" data-index="' + i + '" data-url="' + escapeHtml(r.url) + '">' +
+               '<span class="qs-url">' + highlightMatch(r.url, query) + '</span>' +
+               '<span class="qs-badge qs-' + escapeHtml(cls) + '">' + escapeHtml(cls) + '</span>' +
+               '</div>';
+      }).join('');
+      resultsBox.style.display = 'block';
+    }
+
+    function goToDetail(url) {
+      var params = new URLSearchParams({ url: url });
+      var show = new URLSearchParams(window.location.search).get('show');
+      if (show) params.set('show', show);
+      window.location.href = '/detail?' + params.toString();
+    }
+
+    function setActive(index) {
+      var items = resultsBox.querySelectorAll('.qs-item:not(.qs-empty)');
+      items.forEach(function (el) { el.classList.remove('qs-active'); });
+      if (index >= 0 && index < items.length) {
+        activeIndex = index;
+        items[index].classList.add('qs-active');
+        items[index].scrollIntoView({ block: 'nearest' });
+      } else {
+        activeIndex = -1;
+      }
+    }
+
+    input.addEventListener('input', function () {
+      var q = input.value.trim();
+      clearTimeout(debounceTimer);
+      if (!q) {
+        hideResults();
+        return;
+      }
+      debounceTimer = setTimeout(function () {
+        fetch('/api/search_url?q=' + encodeURIComponent(q))
+          .then(function (resp) { return resp.ok ? resp.json() : { results: [] }; })
+          .then(function (data) { renderResults(data.results || [], q); })
+          .catch(function () { hideResults(); });
+      }, DEBOUNCE_MS);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      var items = resultsBox.querySelectorAll('.qs-item:not(.qs-empty)');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(Math.min(activeIndex + 1, items.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(Math.max(activeIndex - 1, -1));
+      } else if (e.key === 'Enter') {
+        if (activeIndex >= 0 && currentResults[activeIndex]) {
+          goToDetail(currentResults[activeIndex].url);
+        } else if (currentResults.length > 0) {
+          goToDetail(currentResults[0].url);
+        }
+      } else if (e.key === 'Escape') {
+        hideResults();
+        input.blur();
+      }
+    });
+
+    resultsBox.addEventListener('mousedown', function (e) {
+      // mousedown (not click) so it fires before blur hides the dropdown
+      var item = e.target.closest('.qs-item:not(.qs-empty)');
+      if (item) {
+        e.preventDefault();
+        goToDetail(item.dataset.url);
+      }
+    });
+
+    input.addEventListener('blur', function () {
+      // small delay so mousedown on a result can fire first
+      setTimeout(hideResults, 150);
+    });
+
+    input.addEventListener('focus', function () {
+      if (input.value.trim() && currentResults.length) {
+        resultsBox.style.display = 'block';
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initQuickSearch);
+  } else {
+    initQuickSearch();
+  }
+})();

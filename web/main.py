@@ -7,9 +7,11 @@ import sys
 import argparse
 import logging
 import base64
+import json
+import io
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, send_file, abort
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -18,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, get_domain
+from common.content_storage import load_content
 
 # Global variables
 page = 1
@@ -245,10 +248,51 @@ class URLDetail:
         self.last_active = url_detail[15]
         self.last_edit = url_detail[16]
         self.eval_later = url_detail[17]
+        self.latest_content_hash = url_detail[18]
         self.ip = get_ip(self.url)
         self.src = []
+        # per-source observation rows for the Sources tab:
+        # (source, first_seen, last_seen, occurrences, derived_from)
+        self.source_rows = []
         self.src_urls = []
         self.contained_urls = []
+        # content history rows for the Content tab (dicts; see detail())
+        self.content_rows = []
+        # sandbox jobs for the Sandbox tab (dicts keyed on the sandbox_job row)
+        self.sandbox_jobs = []
+        # set of content hashes that already have a sandbox job (used by the
+        # Content tab to mark rows that have any associated sandbox analysis)
+        self.content_hashes_with_sandbox = set()
+
+
+def get_detail_menu(url, show=None, counts=None):
+    """Build the tab menu displayed under the URL on the detail page.
+
+    :param url: the URL whose detail page it is
+    :param show: optional "show" filter to keep in tab links
+    :param counts: optional dict mapping tab id -> badge count; tabs without
+                   an entry in the dict display no badge
+    """
+    counts = counts or {}
+    tabs = [
+        ("overview", "Overview"),
+        ("content", "Content"),
+        ("sources", "Sources"),
+        ("sandbox", "Sandbox"),
+        ("class_history", "Class. History"),
+    ]
+    menu = []
+    for tab_id, label in tabs:
+        params = {"url": url, "tab": tab_id}
+        if show:
+            params["show"] = show
+        menu.append({
+            "id": tab_id,
+            "label": label,
+            "count": counts.get(tab_id),
+            "href": url_for("detail", **params),
+        })
+    return menu
 
 
 @app.route('/detail', methods=['GET', 'POST'])
@@ -256,6 +300,7 @@ def detail():
     user = get_user(flask.request.environ)
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
+    active_tab = flask.request.args.get('tab', 'overview')
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
@@ -263,8 +308,89 @@ def detail():
             return redirect(url_for('detail', url=url))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later, latest_content_hash FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+
+        # classification history for the Class. History tab;
+        # `reason` and `note` are stored separately so the UI can show each distinctly
+        class_history = db.execute(
+            "SELECT changed_at, classification, reason, note, changed_by FROM classification_history WHERE url = ? ORDER BY changed_at DESC",
+            (url,),
+        ).fetchall()
+
+        # Content history for the Content tab (newest first), with per-URL first/last seen
+        snapshots = db.execute("""
+            SELECT uc.content_hash, uc.first_seen, uc.last_seen, uc.is_latest,
+                   cs.downloaded_at, cs.http_status, cs.mime_type, cs.content_size,
+                   cs.storage_path, cs.sha1, cs.http_headers
+            FROM url_content uc
+            JOIN content_snapshot cs ON cs.content_hash = uc.content_hash
+            WHERE uc.url = ?
+            ORDER BY uc.first_seen DESC
+        """, (url,)).fetchall()
+
+        prev_hash = None
+        for content_hash, first_seen, last_seen, is_latest, downloaded_at, http_status, mime, csize, storage_path, sha1, http_headers in snapshots:
+            row = {
+                "hash": content_hash,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "downloaded_at": downloaded_at,
+                "http_status": http_status,
+                "mime": mime,
+                "size": csize,
+                "path": storage_path,  # serves as the download link target
+                "sha1": sha1,
+                "is_latest": is_latest == "yes",
+                "headers": json.loads(http_headers) if http_headers else None,
+            }
+            # Non-latest rows are "changed" when superseded by different (newer) content
+            row["changed"] = not row["is_latest"] and prev_hash is not None and prev_hash != content_hash
+            prev_hash = content_hash
+            url_detail.content_rows.append(row)
+        # Sandbox jobs for the Sandbox tab (newest first). The LEFT JOIN pulls
+        # the snapshot metadata as a fallback when the job hasn't snapped it
+        # into its own mime_type/content_size columns yet (legacy rows).
+        sandbox_rows = db.execute("""
+            SELECT sj.id, sj.content_hash, sj.provider, sj.external_id, sj.status,
+                   sj.submitted_at, sj.completed_at, sj.report_url, sj.report_json,
+                   sj.requested_by,
+                   COALESCE(sj.mime_type, cs.mime_type)   AS mime_type,
+                   COALESCE(sj.content_size, cs.content_size) AS content_size
+            FROM sandbox_job sj
+            LEFT JOIN content_snapshot cs ON cs.content_hash = sj.content_hash
+            WHERE sj.url = ?
+            ORDER BY sj.submitted_at DESC, sj.id DESC
+        """, (url,)).fetchall()
+        for row in sandbox_rows:
+            url_detail.sandbox_jobs.append({
+                "id": row[0],
+                "content_hash": row[1],
+                "provider": row[2] or "PSNC Sandbox",
+                "external_id": row[3],
+                "status": row[4] or "pending",
+                "submitted_at": row[5],
+                "completed_at": row[6],
+                "report_url": row[7],
+                "report_json": json.loads(row[8]) if row[8] else None,
+                "requested_by": row[9],
+                "mime_type": row[10],
+                "content_size": row[11],
+            })
+        url_detail.content_hashes_with_sandbox = {
+            j["content_hash"] for j in url_detail.sandbox_jobs if j["content_hash"]
+        }
+
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
+        # per-source observation stats for the Sources tab (source, first_seen, last_seen, occurrences, derived_from)
+        # "derived_from" is the source URL this URL was extracted from (discovered_urls),
+        # which allows deriving the original source for URLs extracted from a script hosted on another URL
+        url_detail.source_rows = db.execute("""
+            SELECT us.source, us.first_seen, us.last_seen, us.occurrences,
+                   (SELECT du.src_url FROM discovered_urls du WHERE du.url = us.url LIMIT 1) AS derived_from
+            FROM url_source us
+            WHERE us.url = ?
+            ORDER BY us.source
+        """, (url,)).fetchall()
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
@@ -294,7 +420,15 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for)
+    # tab menu under the URL name; badge counts reflect real DB data where available
+    menu = get_detail_menu(url, show, counts={
+        "content": len(url_detail.content_rows),
+        "sources": len(url_detail.source_rows),
+        "sandbox": len(url_detail.sandbox_jobs),
+        "class_history": len(class_history),
+    })
+
+    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for, menu=menu, active_tab=active_tab, class_history=class_history)
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
@@ -309,7 +443,15 @@ def edit_detail():
             classification = flask.request.form['class']
             reason = flask.request.form['reason']
             evaluated = "yes" if classification != "unclassified" else "no"
-            db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            # Use update_url_field to ensure record_url_history is called for each changed field
+            # this will trigger the insertion into classification_history table
+            from common.db_helpers import update_url_field
+            update_url_field(db, url, "note", note, changed_by=user)
+            update_url_field(db, url, "classification", classification, changed_by=user)
+            update_url_field(db, url, "classification_reason", reason, changed_by=user)
+            
+            # Update last_edit and evaluated separately as they might not be in URL_UPDATABLE_FIELDS or need different handling
+            db.execute("UPDATE urls SET last_edit = ?, evaluated = ? WHERE url = ?", (user, evaluated, url))
             if classification == "malicious":
                 back_propagation(db, url)
             return redirect(url_for("list_all", show=show))
@@ -345,16 +487,40 @@ def bulk_edit_action():
     evaluated = "yes" if classification != "unclassified" else "no"
     urls_string = "('" + "', '".join(selected_urls) + "')"
     with SQLiteWrapper(config.db_path) as db:
-        if note:
-            db.execute(f"UPDATE urls SET note = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (note, user, evaluated))
-        if classification:
-            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
-        if classification_reason:
-            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+        from common.db_helpers import update_url_field
+        for url in selected_urls:
+            if note:
+                update_url_field(db, url, "note", note, changed_by=user)
+            if classification:
+                update_url_field(db, url, "classification", classification, changed_by=user)
+            if classification_reason:
+                update_url_field(db, url, "classification_reason", classification_reason, changed_by=user)
+            
+            db.execute("UPDATE urls SET last_edit = ?, evaluated = ? WHERE url = ?", (user, evaluated, url))
         if classification == "malicious":
             for url in selected_urls:
                 back_propagation(db, url)
     return redirect(url_for("list_all"))
+
+
+@app.route('/api/search_url', methods=['GET'])
+def api_search_url():
+    """Lightweight live search endpoint — returns up to 15 URLs matching the
+    query substring. Used by the quick-search input in the top panel."""
+    q = (flask.request.args.get('q') or '').strip()
+    if not q:
+        return make_response(jsonify({'results': []}), 200)
+    # escape LIKE wildcards in user input so searching for e.g. "%" doesn't
+    # blow up into a full table scan
+    q_escaped = q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    with SQLiteWrapper(config.db_path) as db:
+        rows = db.execute(
+            "SELECT url, classification, status FROM urls WHERE url LIKE ? ESCAPE '\\' LIMIT 15",
+            (f"%{q_escaped}%",)
+        ).fetchall()
+    return make_response(jsonify({'results': [
+        {'url': r[0], 'classification': r[1], 'status': r[2]} for r in rows
+    ]}), 200)
 
 
 @app.route('/api/url_stats', methods=['GET'])
@@ -387,3 +553,52 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+@app.route('/content/download', methods=['GET'])
+def download_content():
+    """Serve a stored content blob by its SHA-256 hash."""
+    content_hash = flask.request.args.get('hash')
+    if not content_hash:
+        abort(404)
+    try:
+        data = load_content(config.content_storage_path, content_hash)
+    except FileNotFoundError:
+        abort(404)
+    return send_file(io.BytesIO(data), download_name=content_hash[:16], as_attachment=True)
+
+
+@app.route('/sandbox/request', methods=['POST'])
+def request_sandbox():
+    """Record a sandbox analysis request for a content snapshot.
+
+    Copies the snapshot's mime_type/content_size onto the job so the Sandbox
+    tab can show exactly what was submitted even if the underlying snapshot
+    row is later superseded.
+    """
+    user = get_user(flask.request.environ)
+    content_hash = flask.request.form.get('hash') or flask.request.args.get('hash')
+    url = flask.request.form.get('url') or flask.request.args.get('url')
+    provider = flask.request.form.get('provider') or flask.request.args.get('provider') or 'PSNC Sandbox'
+    if not content_hash:
+        abort(404)
+    with SQLiteWrapper(config.db_path) as db:
+        snap = db.execute(
+            "SELECT mime_type, content_size FROM content_snapshot WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+        mime_type = snap[0] if snap else None
+        content_size = snap[1] if snap else None
+        db.execute(
+            """INSERT INTO sandbox_job
+                   (content_hash, url, provider, status, submitted_at, requested_by, mime_type, content_size)
+               VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (content_hash, url, provider,
+             datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+             user, mime_type, content_size))
+    return redirect(url_for('detail', url=url, tab='sandbox'))
+
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)
+
