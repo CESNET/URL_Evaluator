@@ -42,11 +42,12 @@ if args.verbose:
 # Load config
 config = Config(args.config)
 
-# Connect to MISP
+# Connect to MISP (optional - if the connection fails, MISP features are disabled)
+misp = None
 try:
     misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert)
 except Exception as e:
-    print(f"Error: Cannot connect to MISP: {e}")
+    logger.warning(f"Cannot connect to MISP, MISP features disabled: {e}")
 
 # Init flask
 application = app = Flask(__name__)
@@ -66,6 +67,8 @@ def get_urlhaus_link(url):
 
 
 def get_misp_link(url_detail):
+    if misp is None:
+        return None
     if url_detail.reported == "yes":
         try:
             events = misp.search(controler="events", value=url_detail.url, type_attribute='url')
@@ -256,6 +259,7 @@ def detail():
     user = get_user(flask.request.environ)
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
+    tab = flask.request.args.get('tab', 'overview')
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
@@ -268,6 +272,34 @@ def detail():
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
+
+        # Sources tab: aggregate observations per honeynet (fall back to source label).
+        # One row per honeynet with first/last observation and total sightings.
+        try:
+            observations = db.execute("""
+                SELECT COALESCE(honeynet, source) AS source_name,
+                       MIN(observed_at)            AS first_observed,
+                       MAX(observed_at)            AS last_observed,
+                       COUNT(*)                    AS occurrences
+                FROM observations
+                WHERE url = ?
+                GROUP BY COALESCE(honeynet, source)
+                ORDER BY first_observed
+            """, (url,)).fetchall()
+        except Exception:
+            observations = []
+
+        # The URL this one was derived from (extracted from), if any (internal detail link).
+        derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
+        derived_from_in_db = bool(derived_from and db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (derived_from,)).fetchone())
+
+        # Badge counts for the tab bar
+        tab_counts = {
+            "content": len(url_detail.contained_urls) + len(sessions),
+            "sources": len(observations),
+            "sandbox": 1 if url_detail.hash else 0,
+            "class_history": 1 if url_detail.last_edit else 0,
+        }
 
     # count not active days
     inactive_for = 0
@@ -294,7 +326,12 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for)
+    return render_template(
+        'detail.html', user=user, url=url_detail, sessions=sessions, show=show,
+        links=links, inactive_for=inactive_for, tab=tab,
+        observations=observations, tab_counts=tab_counts,
+        derived_from=derived_from, derived_from_in_db=derived_from_in_db
+    )
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
