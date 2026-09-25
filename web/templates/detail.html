@@ -263,9 +263,33 @@
         <div class="content"><p class="tab-empty">Sandbox analysis coming soon.</p></div>
         {% endif %}
 
-        {# ============ TAB: CLASSIFICATION HISTORY (placeholder) ============ #}
+        {# ============ TAB: CLASSIFICATION HISTORY (timeline per Figma) ============ #}
         {% if tab == 'class_history' %}
-        <div class="content"><p class="tab-empty">Classification history coming soon.</p></div>
+        <div class="content">
+            {% if class_history %}
+            <ul class="class-history">
+                {% for entry in class_history %}
+                {# entry: 0 classification, 1 reason, 2 note, 3 actor, 4 created_at #}
+                <li class="class-history-item classification-{{ entry[0] }}">
+                    <span class="ch-node" aria-hidden="true"></span>
+                    <div class="ch-body">
+                        <div class="ch-head">
+                            <span class="ch-time">{{ entry[4] }} UTC</span>
+                            <span class="ch-class"><span class="ch-dot"></span>{{ entry[0] }}</span>
+                            {% if entry[1] %}<span class="ch-reason">{{ entry[1] }}</span>{% endif %}
+                            <span class="ch-actor">{{ entry[3] }}</span>
+                        </div>
+                        {% if entry[2] %}
+                        <p class="ch-note">{{ entry[2] }}</p>
+                        {% endif %}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="tab-empty">No classification history recorded for this URL yet.</p>
+            {% endif %}
+        </div>
         {% endif %}
 
     </div>

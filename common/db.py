@@ -54,3 +54,27 @@ class SQLiteWrapper:
             self.conn.rollback()
             raise
         return self.cursor
+
+    def record_classification(self, url, classification, reason=None, note=None, actor="system"):
+        """
+        Append one entry to the classification_history audit trail for `url`.
+
+        Centralised so every writer (evaluator, back-propagation, session
+        heuristics, web UI edits) logs decisions in a consistent format.
+
+        `actor` identifies who/what performed the classification: a human
+        username from the web UI or a system module identifier
+        (e.g. 'evaluator', 'evaluator-backprop', 'session-ddos').
+
+        """
+        try:
+            logger.debug(f"Recording classification history for {url}: {classification} by {actor}")
+            self.cursor.execute(
+                "INSERT INTO classification_history (url, classification, reason, note, actor) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (url, classification, reason, note, actor)
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not record classification history for {url}: {e}")
+            self.conn.rollback()

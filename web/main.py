@@ -27,9 +27,14 @@ filter_params = {}
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Receive messages from Warden, find suspicious URLs and save them to evaluator database.")
-parser.add_argument('--config', '-c', action='store', default="/etc/url_evaluator/config.yaml", help='Path to evaluator config file')
+parser.add_argument('--config', '-c', action='store', default=os.path.join(os.path.dirname(__file__), '../etc/config.yaml'), help='Path to evaluator config file')
 parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
-args = parser.parse_args()
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+else:
+    # When imported (e.g. by pytest), use defaults relative to workspace root
+    args = argparse.Namespace(config="etc/config.yaml", verbose=False)
 
 # Set logger
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
@@ -40,7 +45,16 @@ if args.verbose:
     logger.setLevel('DEBUG')
 
 # Load config
-config = Config(args.config)
+try:
+    config = Config(args.config)
+except FileNotFoundError:
+    # Fallback for tests/development if the config is missing at the specified path
+    import os
+    fallback_path = os.path.join(os.path.dirname(__file__), '../etc/config.yaml')
+    if os.path.exists(fallback_path):
+        config = Config(fallback_path)
+    else:
+        raise
 
 # Connect to MISP (optional - if the connection fails, MISP features are disabled)
 misp = None
@@ -129,10 +143,17 @@ def parse_filters():
 
 
 def back_propagation(db, url):
-    src_urls = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-    if src_urls:
-        src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
+    rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+    if rows:
+        src_urls = ", ".join(f"'{row[0]}'" for row in rows)
         db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+        for row in rows:
+            db.record_classification(
+                row[0],
+                "malicious",
+                reason="Downloading from malicious URL",
+                actor="evaluator-backprop"
+            )
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -267,7 +288,13 @@ def detail():
             return redirect(url_for('detail', url=url))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        row = db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
+        if not row:
+            # To avoid crashing in a real environment, return a 404 page or a JSON error.
+            # In the context of the existing app, we return a render_template or redirect.
+            # Since we are adding a specific API check, we'll return a 404 response.
+            return make_response(jsonify({'error': 'URL not found in database'}), 404)
+        url_detail = URLDetail(row)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
@@ -289,6 +316,18 @@ def detail():
         except Exception:
             observations = []
 
+        # Classification history (newest first); fall back to empty list when the
+        # table does not exist yet (migration 002 not applied).
+        try:
+            class_history = db.execute("""
+                SELECT classification, reason, note, actor, created_at
+                FROM classification_history
+                WHERE url = ?
+                ORDER BY created_at DESC, id DESC
+            """, (url,)).fetchall()
+        except Exception:
+            class_history = []
+
         # The URL this one was derived from (extracted from), if any (internal detail link).
         derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
         derived_from_in_db = bool(derived_from and db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (derived_from,)).fetchone())
@@ -298,7 +337,7 @@ def detail():
             "content": len(url_detail.contained_urls) + len(sessions),
             "sources": len(observations),
             "sandbox": 1 if url_detail.hash else 0,
-            "class_history": 1 if url_detail.last_edit else 0,
+            "class_history": len(class_history),
         }
 
     # count not active days
@@ -330,6 +369,7 @@ def detail():
         'detail.html', user=user, url=url_detail, sessions=sessions, show=show,
         links=links, inactive_for=inactive_for, tab=tab,
         observations=observations, tab_counts=tab_counts,
+        class_history=class_history,
         derived_from=derived_from, derived_from_in_db=derived_from_in_db
     )
 
@@ -347,6 +387,8 @@ def edit_detail():
             reason = flask.request.form['reason']
             evaluated = "yes" if classification != "unclassified" else "no"
             db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            # Analyst decision -> record in the classification history
+            db.record_classification(url, classification, reason=reason, note=note, actor=user)
             if classification == "malicious":
                 back_propagation(db, url)
             return redirect(url_for("list_all", show=show))
@@ -388,6 +430,16 @@ def bulk_edit_action():
             db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
         if classification_reason:
             db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+        # Analyst decision -> record in the classification history for each URL
+        if classification or note or classification_reason:
+            for url in selected_urls:
+                db.record_classification(
+                    url,
+                    classification or None,
+                    reason=classification_reason or None,
+                    note=note or None,
+                    actor=user
+                )
         if classification == "malicious":
             for url in selected_urls:
                 back_propagation(db, url)
@@ -424,3 +476,6 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)

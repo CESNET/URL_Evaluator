@@ -80,3 +80,20 @@ CREATE INDEX idx_observations_source        ON observations(source);
 CREATE INDEX idx_observations_honeynet      ON observations(honeynet);
 CREATE INDEX idx_observations_session       ON observations(session);
 CREATE INDEX idx_observations_observed_at   ON observations(observed_at);
+
+-- Append-only audit trail of classification decisions per URL.
+-- Written both by automated modules (evaluator, back-propagation, session
+-- heuristics) and by human analysts editing a record through the web UI.
+CREATE TABLE classification_history
+(
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    url            TEXT NOT NULL REFERENCES urls(url),
+    classification TEXT NOT NULL,
+    reason         TEXT,
+    note           TEXT,
+    actor          TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now'))
+);
+
+CREATE INDEX idx_classification_history_url        ON classification_history(url);
+CREATE INDEX idx_classification_history_created_at ON classification_history(created_at);

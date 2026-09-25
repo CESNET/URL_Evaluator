@@ -129,6 +129,7 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
         if occurrences > config.ddos_threshold["same_url_single_session"]:
             logger.info(f"URL {url} was classified as harmless, reason: DDoS target")
             db.execute( "UPDATE urls SET evaluated='yes', classification='harmless', classification_reason='DDoS target' WHERE url=?", (url,))
+            db.record_classification(url, "harmless", reason="DDoS target", actor="session-ddos")
 
     # Check the number of URLs from the same domain
     domain_map = defaultdict(list)
