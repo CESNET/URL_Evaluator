@@ -23,6 +23,9 @@ done
 
 echo "All running Supervisor services were restarted."
 
+sudo systemctl restart httpd
+echo "httpd was restarted"
+
 # 4. Zobrazenie aktuálneho statusu všetkých služieb
 echo "========================================="
 supervisorctl status
