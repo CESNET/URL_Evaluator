@@ -12,7 +12,15 @@
 BASEDIR=$(dirname "$0")
 . "$BASEDIR/common.sh"
 
-CONFIG="${CONFIG:-/etc/url_evaluator/config.yaml}"
+# --- Config path with fallback ---
+if [ -z "$CONFIG" ]; then
+    if [ -f "/etc/url_evaluator/config.yaml" ]; then
+        CONFIG="/etc/url_evaluator/config.yaml"
+    else
+        CONFIG="./etc/config.yaml"
+    fi
+fi
+
 MIGRATIONS_DIR="$BASEDIR/migrations"
 
 echob "=============== Migrate DB ==============="
