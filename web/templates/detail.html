@@ -274,7 +274,14 @@
                     <span class="ch-node" aria-hidden="true"></span>
                     <div class="ch-body">
                         <div class="ch-head">
-                            <span class="ch-time">{{ entry[4] }} UTC</span>
+                            {# For old db data, which not store time of evaluation by system
+                                display only date instead zero time placeholder #}
+                            {% set ch_ts = entry[4] or '' %}
+                            {% if ch_ts.endswith('00:00:00') %}
+                                <span class="ch-time">{{ ch_ts[:10] }}</span>
+                            {% else %}
+                                <span class="ch-time">{{ ch_ts }} UTC</span>
+                            {% endif %}
                             <span class="ch-class"><span class="ch-dot"></span>{{ entry[0] }}</span>
                             {% if entry[1] %}<span class="ch-reason">{{ entry[1] }}</span>{% endif %}
                             <span class="ch-actor">{{ entry[3] }}</span>
