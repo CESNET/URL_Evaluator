@@ -95,7 +95,7 @@ def search_for_nested_urls(content, src_url):
     try:
         decoded_content = content.decode("utf-8")
         if session := extract_commands(decoded_content):
-            if new_urls := process_new_session(db, config, session, None, datetime.now(timezone.utc).isoformat(), "URL content", src_url):
+            if new_urls := process_new_session(db, config, session, None, datetime.now(timezone.utc).isoformat(), "URL content", src_url, None):
                 logger.info(f"{len(new_urls)} new URLs found in a shell script downloaded from {src_url}: {new_urls}")
     except UnicodeDecodeError:
         return
@@ -324,11 +324,29 @@ if __name__ == "__main__":
             params = tuple(v for _, v in items) + (url,)
             db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
 
+            # Record the decision in the classification history (skip when the URL
+            # could not be fully evaluated yet and will be retried later – there is
+            # no new classification decision to log in that case).
+            if result.get("evaluated") == "yes":
+                db.record_classification(
+                    url,
+                    result["classification"],
+                    reason=result.get("classification_reason"),
+                    actor="evaluator"
+                )
+
             # If the URL was classified as malicious, mark all source URLs that led to it as malicious
             if result["classification"] == "malicious":
                 rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
                 if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
                     db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+                    for row in rows:
+                        db.record_classification(
+                            row[0],
+                            "malicious",
+                            reason="Downloading from malicious URL",
+                            actor="evaluator-backprop"
+                        )
                     logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")

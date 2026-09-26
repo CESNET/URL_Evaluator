@@ -218,3 +218,241 @@
     overflow: scroll;
     /* margin: 10px; */
 }
+
+/* ---------- Detail-page tab navigation (per Figma layout, light theme) ---------- */
+.detail-tabs {
+    display: flex;
+    gap: 28px;
+    margin: 8px 20px 0 20px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.detail .detail-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 6px 10px 6px;
+    margin-bottom: -2px;
+    font-size: 18px;
+    font-weight: 500;
+    color: #818181;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+    transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+.detail .detail-tab:hover {
+    color: #1a8fb8;
+}
+
+.detail .detail-tab.active {
+    color: #17a2c6;
+    font-weight: 700;
+    border-bottom: 3px solid #17a2c6;
+}
+
+.detail .tab-badge {
+    min-width: 26px;
+    height: 24px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #d7dbe0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 8px;
+}
+
+.detail .detail-tab.active .tab-badge {
+    background-color: #17a2c6;
+    color: #fff;
+}
+
+.detail .tab-empty {
+    color: #818181;
+    padding: 20px 5px;
+}
+
+/* ---------- Sources tab (observations per honeynet) ---------- */
+.detail .sources-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: #fff;
+    border: 1px solid #e3e3e3;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.detail .sources-table thead th {
+    text-align: left;
+    font-weight: 600;
+    color: #555;
+    padding: 12px 20px;
+    border-bottom: 2px solid #eee;
+}
+
+.detail .sources-table td {
+    padding: 14px 20px;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+}
+
+.detail .sources-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.detail .sources-table .occurrences {
+    text-align: right;
+    font-weight: 600;
+}
+
+.detail .honeynet-chip {
+    display: inline-block;
+    padding: 6px 12px;
+    background-color: #e9edf1;
+    border-radius: 8px;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.detail .derived-link {
+    color: #17a2c6;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.detail .derived-link:hover {
+    text-decoration: underline;
+}
+
+.detail .derived-link.disabled {
+    color: #9ab8c2;
+    cursor: default;
+    text-decoration: none;
+}
+
+.detail .derived-none {
+    color: #b3b3b3;
+}
+
+/* ---------- Class. History tab (timeline per Figma, light theme) ---------- */
+.detail .class-history {
+    list-style: none;
+    margin: 10px 0 0 6px;
+    padding: 0;
+}
+
+.detail .class-history-item {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    padding: 0 0 34px 34px;
+}
+
+/* vertical connector line */
+.detail .class-history-item::before {
+    content: "";
+    position: absolute;
+    left: 7px;
+    top: 16px;
+    bottom: 0;
+    width: 2px;
+    background-color: #d7dbe0;
+}
+
+.detail .class-history-item:last-child {
+    padding-bottom: 6px;
+}
+
+.detail .class-history-item:last-child::before {
+    display: none;
+}
+
+/* outer timeline ring */
+.detail .class-history .ch-node {
+    position: absolute;
+    left: 0;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 3px solid #9aa4ae;
+    background-color: #f5f5f5;
+    z-index: 1;
+}
+
+.detail .ch-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.detail .ch-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 18px;
+}
+
+.detail .ch-time {
+    font-family: "Lucida Console", "Courier New", monospace;
+    font-size: 0.95em;
+    color: #6b7280;
+    letter-spacing: 0.5px;
+}
+
+.detail .ch-class {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+}
+
+.detail .ch-class .ch-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.detail .ch-reason {
+    color: #374151;
+    font-weight: 500;
+}
+
+.detail .ch-actor {
+    color: #9aa4ae;
+    font-size: 0.95em;
+}
+
+.detail .ch-note {
+    margin: 0;
+    padding-left: 12px;
+    border-left: 2px solid #d7dbe0;
+    font-style: italic;
+    color: #6b7280;
+}
+
+/* per-classification accent colours (node ring + label dot + label text) */
+.detail .class-history-item.classification-malicious .ch-node,
+.detail .class-history-item.classification-invalid .ch-node   { border-color: #d92d20; }
+.detail .class-history-item.classification-unclassified .ch-node { border-color: #7a5af8; }
+.detail .class-history-item.classification-harmless .ch-node   { border-color: #29c000; }
+.detail .class-history-item.classification-unreachable .ch-node { border-color: #f79009; }
+.detail .class-history-item.classification-miner .ch-node      { border-color: #06aed4; }
+
+.detail .class-history-item.classification-malicious .ch-class,
+.detail .class-history-item.classification-invalid .ch-class   { color: #d92d20; }
+.detail .class-history-item.classification-unclassified .ch-class { color: #7a5af8; }
+.detail .class-history-item.classification-harmless .ch-class   { color: #29c000; }
+.detail .class-history-item.classification-unreachable .ch-class { color: #f79009; }
+.detail .class-history-item.classification-miner .ch-class      { color: #06aed4; }
+
+.detail .class-history-item.classification-malicious .ch-dot,
+.detail .class-history-item.classification-invalid .ch-dot     { background-color: #d92d20; }
+.detail .class-history-item.classification-unclassified .ch-dot { background-color: #7a5af8; }
+.detail .class-history-item.classification-harmless .ch-dot     { background-color: #29c000; }
+.detail .class-history-item.classification-unreachable .ch-dot  { background-color: #f79009; }
+.detail .class-history-item.classification-miner .ch-dot        { background-color: #06aed4; }
