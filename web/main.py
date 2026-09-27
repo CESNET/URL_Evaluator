@@ -9,7 +9,7 @@ import logging
 import base64
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, get_domain
+try:
+    from common import content_store
+except Exception:
+    content_store = None
 
 # Global variables
 page = 1
@@ -66,6 +70,39 @@ except Exception as e:
 # Init flask
 application = app = Flask(__name__)
 app.secret_key = config.flask_secret_key
+
+
+@app.template_filter('human_bytes')
+def human_bytes(num):
+    """Render a byte count in a Figma-style human readable form (e.g. 44.3 KB)."""
+    try:
+        num = float(num)
+    except (TypeError, ValueError):
+        return ""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(num) < 1024.0:
+            if unit == "B":
+                return f"{int(num)} {unit}"
+            return f"{num:.1f} {unit}"
+        num /= 1024.0
+    return f"{num:.1f} PB"
+
+
+@app.template_filter('fmt_ts')
+def fmt_ts(value, with_time=True):
+    """
+    Normalise an ISO-ish timestamp to 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS UTC'.
+    Accepts both 'T' and space separators and strips the timezone designator for
+    display (all stored timestamps are UTC).
+    """
+    if not value:
+        return ""
+    s = str(value).replace("T", " ")
+    s = s.split("+")[0].split("Z")[0].strip()
+    # drop sub-second precision for display
+    if "." in s:
+        s = s.split(".")[0]
+    return (s + " UTC") if with_time else s.split(" ")[0]
 
 
 def get_urlhaus_link(url):
@@ -332,9 +369,26 @@ def detail():
         derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
         derived_from_in_db = bool(derived_from and db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (derived_from,)).fetchone())
 
+        # Content tab: group identical consecutive downloads into versions
+        # (per Figma mockup). Fall back to an empty list when the new tables do
+        # not exist yet (migration 003 not applied).
+        try:
+            if content_store is not None:
+                content_versions = content_store.get_content_versions(db, url)
+            else:
+                content_versions = []
+        except Exception:
+            content_versions = []
+
+        # Current classification (for the per-version sandbox label) and the
+        # date range banner shown at the top of the Content tab.
+        current_classification = url_detail.classification
+        content_range_start = content_versions[0]["first_fetched"][:10] if content_versions else None
+        content_range_end = (url_detail.last_seen or "")[:10] if content_versions else None
+
         # Badge counts for the tab bar
         tab_counts = {
-            "content": len(url_detail.contained_urls) + len(sessions),
+            "content": len(content_versions) if content_versions else (len(url_detail.contained_urls) + len(sessions)),
             "sources": len(observations),
             "sandbox": 1 if url_detail.hash else 0,
             "class_history": len(class_history),
@@ -370,7 +424,11 @@ def detail():
         links=links, inactive_for=inactive_for, tab=tab,
         observations=observations, tab_counts=tab_counts,
         class_history=class_history,
-        derived_from=derived_from, derived_from_in_db=derived_from_in_db
+        derived_from=derived_from, derived_from_in_db=derived_from_in_db,
+        content_versions=content_versions,
+        content_range_start=content_range_start,
+        content_range_end=content_range_end,
+        current_classification=current_classification
     )
 
 
@@ -476,6 +534,44 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+@app.route('/content/download/<int:content_id>')
+def download_content(content_id):
+    """
+    Serve a stored content sample.
+
+    The on-disk path is taken from the DB (never from user input) and resolved
+    against the configured content_dir, so the route cannot be abused to read
+    arbitrary files. Files are forced to download as attachments.
+    """
+    with SQLiteWrapper(config.db_path) as db:
+        row = db.execute(
+            "SELECT file_path, sha256, mime_type FROM content WHERE id = ?",
+            (content_id,)
+        ).fetchone()
+    if not row:
+        abort(404)
+    file_path, sha256, mime_type = row
+
+    # Resolve & confine to the configured content dir.
+    content_dir = getattr(config, "content_dir", None)
+    try:
+        base = os.path.realpath(content_dir) if content_dir else None
+        real = os.path.realpath(file_path)
+    except Exception:
+        abort(404)
+    if not real.startswith((base or "") + os.sep) or not os.path.isfile(real):
+        abort(404)
+
+    short = (sha256 or "sample")[:24]
+    return send_file(
+        real,
+        mimetype=mime_type or "application/octet-stream",
+        as_attachment=True,
+        download_name=f"{short}.bin",
+    )
+
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)

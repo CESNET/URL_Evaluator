@@ -253,9 +253,93 @@
         </div>
         {% endif %}
 
-        {# ============ TAB: CONTENT (placeholder) ============ #}
+        {# ============ TAB: CONTENT (download observations / versions per Figma) ============ #}
         {% if tab == 'content' %}
-        <div class="content"><p class="tab-empty">Content view coming soon.</p></div>
+        <div class="content content-tab">
+            {% if content_versions %}
+            <div class="content-meta">
+                <p class="content-meta-note">Content is polled daily. Identical responses are grouped &mdash; only distinct versions are shown.</p>
+                {% if content_range_start and content_range_end %}
+                <p class="content-range">{{ content_range_start }} &nbsp;&ndash;&nbsp; {{ content_range_end }}</p>
+                {% endif %}
+            </div>
+
+            {# Render newest version first (mockup shows Version 2 above Version 1) #}
+            {% for v in content_versions | reverse %}
+            <section class="version-card {% if v.changed %}changed{% endif %}">
+                <header class="version-card-head">
+                    <div class="version-card-title">
+                        <h3>Version {{ v.version }}</h3>
+                        {% if v.changed %}<span class="badge-changed">content changed</span>{% endif %}
+                    </div>
+                    {% if v.status_code %}<span class="version-status">HTTP {{ v.status_code }}</span>{% endif %}
+                </header>
+
+                <table class="version-card-body">
+                    <tbody>
+                        <tr>
+                            <td>Observed</td>
+                            <td>{{ v.first_fetched|fmt_ts }} &rarr; {{ v.last_fetched|fmt_ts }}</td>
+                        </tr>
+                        <tr>
+                            <td>Fetch count</td>
+                            <td>{{ v.fetch_count }}&times; confirmed identical</td>
+                        </tr>
+                        {% if v.source_ip %}
+                        <tr>
+                            <td>Downloaded from</td>
+                            <td>{{ v.source_ip }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.sha256 %}
+                        <tr>
+                            <td>SHA-256</td>
+                            <td class="mono">{{ v.sha256 }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.file_size is not none %}
+                        <tr>
+                            <td>Size</td>
+                            <td>{{ v.file_size|human_bytes }}</td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td>Sandbox</td>
+                            <td>
+                                <span class="classification {{ current_classification }} classification-inline">{{ current_classification }}</span>
+                                <span class="sandbox-sep">&middot;</span>
+                                <span class="sandbox-name">PSNC Sandbox</span>
+                                <a class="sandbox-report" href="{{ links['joe-sandbox'] }}" target="_blank">report &rarr;</a>
+                            </td>
+                        </tr>
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Download</td>
+                            <td>
+                                <a class="download-link mono" href="{{ url_for('download_content', content_id=v.content_id) }}">
+                                    &#8681; {{ (v.sha256 or 'sample')[:32] }}.bin
+                                </a>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if v.response_headers %}
+                        <tr>
+                            <td>HTTP headers</td>
+                            <td class="headers mono">
+                                {% for k, val in v.response_headers.items() %}
+                                <div><span class="header-key">{{ k }}:</span> {{ val }}</div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </section>
+            {% endfor %}
+            {% else %}
+            <p class="tab-empty">No downloaded content recorded for this URL yet.</p>
+            {% endif %}
+        </div>
         {% endif %}
 
         {# ============ TAB: SANDBOX (placeholder) ============ #}
