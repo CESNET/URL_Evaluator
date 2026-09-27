@@ -386,9 +386,9 @@ def detail():
         content_range_start = content_versions[0]["first_fetched"][:10] if content_versions else None
         content_range_end = (url_detail.last_seen or "")[:10] if content_versions else None
 
-        # Badge counts for the tab bar
+        # Badge counts for the tab bar (0 => the template hides the badge)
         tab_counts = {
-            "content": len(content_versions) if content_versions else (len(url_detail.contained_urls) + len(sessions)),
+            "content": len(content_versions),
             "sources": len(observations),
             "sandbox": 1 if url_detail.hash else 0,
             "class_history": len(class_history),
