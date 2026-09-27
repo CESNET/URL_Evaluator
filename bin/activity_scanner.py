@@ -15,23 +15,71 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid
+try:
+    from common import content_store
+except Exception:
+    content_store = None
+
+
+def _record_daily_fetch(db, url, response, body, fetched_at):
+    """
+    Daily re-verification: deduplicate the returned payload, write a
+    download_observation row and let the helper flag whether the content
+    changed since the previous fetch.
+    """
+    if content_store is None or body is None:
+        return
+    content_dir = getattr(config, "content_dir", None)
+    if not content_dir:
+        return
+    try:
+        # create content dir if not exists
+        content_store.ensure_content_dir(content_dir)
+        content_id = None
+        if body:
+            info = content_store.get_or_create_content(db, content_dir, body)
+            content_id = info.get("id")
+        content_store.record_download_observation(
+            db,
+            url,
+            content_id=content_id,
+            fetched_at=fetched_at,
+            source_ip=content_store.resolve_source_ip(url),
+            status_code=getattr(response, "status_code", None),
+            response_headers=dict(getattr(response, "headers", {}) or {}),
+        )
+    except Exception as e:
+        logger.debug(f"Thread: could not record daily fetch for {url}: {e}")
 
 
 def thread_func(thread_id, urls):
+    """Worker process: re-poll each URL, record a download observation (content
+    dedup + change detection) and update its active/inactive status."""
     with SQLiteWrapper(config.db_path) as db:
         for url, current_status, last_active in urls:
             if not is_valid(url):
                 continue
 
             # Send a HTTP request to check whether the URL is active
+            fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            body = None
+            resp = None
             try:
                 with requests.get(url, stream=True, proxies=proxies, timeout=10) as r:
+                    resp = r
                     if r.ok:
                         new_status = "active"
+                        try:
+                            body = r.content
+                        except Exception:
+                            body = None
                     else:
                         new_status = "inactive"
             except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
                 new_status = "inactive"
+
+            # Daily content-change detection / history (best effort)
+            _record_daily_fetch(db, url, resp, body, fetched_at)
 
             # Update DB record
             logger.debug(f'Thread {thread_id}: Updating DB record for {url}')
@@ -49,6 +97,7 @@ def activity_scanner():
         urls = db.execute("SELECT url, status, last_active FROM urls").fetchall()
     logger.info(f"Loaded {len(urls)} URLs, processing...")
 
+    # Chunking: spawn one worker thread per chunk of max 1000 URLs, so URLs are re-polled in parallel.
     url_limit = 1000
     thread_id = 1
     for start_idx in range(0, len(urls), url_limit):
