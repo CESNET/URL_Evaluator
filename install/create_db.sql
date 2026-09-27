@@ -97,3 +97,51 @@ CREATE TABLE classification_history
 
 CREATE INDEX idx_classification_history_url        ON classification_history(url);
 CREATE INDEX idx_classification_history_created_at ON classification_history(created_at);
+
+-- ============================================================================
+-- Content storage (deduplicated) + per-download observations
+-- ============================================================================
+-- The raw body downloaded from a URL is written to the filesystem exactly once
+-- per unique SHA-256 digest; the DB row below stores only metadata + the file
+-- path. Multiple URLs (or repeated polls of the same URL) that return identical
+-- bytes reference the same `content` row, giving deduplication for free.
+CREATE TABLE content
+(
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256        TEXT NOT NULL UNIQUE,
+    file_path     TEXT NOT NULL,          -- path of the stored sample on disk
+    file_size     INTEGER,                -- size in bytes
+    -- MIME (Multipurpose Internet Mail Extensions) type: standardised "type/subtype"
+    -- label describing the format of the downloaded content (e.g. 'application/x-sh',
+    -- 'application/octet-stream', 'text/html'). Taken from the Content-Type header,
+    -- or sniffed from magic bytes when the header is missing; purely descriptive
+    -- (used for the download Content-Type, shell-script detection, MISP export).
+    mime_type     TEXT,                   -- best-effort MIME type: format label of the payload
+    first_seen    TEXT NOT NULL,          -- ISO timestamp of first capture
+    sandbox_info  TEXT,                   -- JSON blob with sandbox results (optional)
+    vt_stats      TEXT,                   -- JSON blob with VT file stats (optional)
+    threat_label  TEXT
+);
+
+CREATE INDEX idx_content_sha256 ON content(sha256);
+
+-- One row per *HTTP fetch* of a URL. Metadata that can differ between fetches
+-- of identical content (timestamp, source IP, response headers, status code)
+-- lives here. `content_id` is NULL when the response carried no usable body
+-- (error page, oversized payload, empty reply, ...).
+CREATE TABLE download_observations
+(
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT NOT NULL REFERENCES urls(url),
+    content_id      INTEGER REFERENCES content(id),
+    fetched_at      TEXT NOT NULL,        -- ISO timestamp of the request
+    source_ip       TEXT,                 -- remote IP the content was served from
+    status_code     INTEGER,
+    response_headers TEXT,                -- JSON dict of response headers
+    change_type     TEXT NOT NULL DEFAULT 'initial'
+                        CHECK (change_type IN ('initial', 'confirmed', 'content_changed', 'unavailable'))
+);
+
+CREATE INDEX idx_download_obs_url        ON download_observations(url);
+CREATE INDEX idx_download_obs_content    ON download_observations(content_id);
+CREATE INDEX idx_download_obs_fetched_at ON download_observations(fetched_at);
