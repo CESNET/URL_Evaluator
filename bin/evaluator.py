@@ -19,6 +19,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(
 from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, extract_commands, process_new_session
+try:
+    from common import content_store
+except Exception:
+    content_store = None
 
 
 def vt_stats_analysis(stats):
@@ -39,11 +43,11 @@ def vt_request(resource_type, resource_id):
     Perform a VirusTotal API request for files or urls and check last analysis stats
     """
 
-    global vt_daily_quota_exceeded
-    global vt_daily_quota_timestamp
-    global vt_minute_quota
-    global vt_minute_quota_cnt
-    global vt_minute_quota_timestamp
+    global vt_daily_quota_exceeded   # True once the VT daily request quota is hit (skip VT until next day)
+    global vt_daily_quota_timestamp  # time when the daily quota was exceeded (used to detect the next-day reset)
+    global vt_minute_quota           # max VT requests allowed per minute (from config)
+    global vt_minute_quota_cnt       # how many VT requests were made in the current minute
+    global vt_minute_quota_timestamp # start of the current minute window (used to reset the per-minute counter)
 
     result = dict(classification="unclassified", classification_reason="No entry")
 
@@ -101,18 +105,79 @@ def search_for_nested_urls(content, src_url):
         return
 
 
+def _record_fetch(url, response, content_id=None, fetched_at=None):
+    """
+    Persist one row of connection metadata for the given HTTP response.
+
+    Best-effort: any failure is logged and swallowed so content storage can
+    never break the core evaluation pipeline.
+    """
+    db_conn = globals().get("db")
+    if content_store is None or db_conn is None:
+        return
+    try:
+        content_store.record_download_observation(
+            db_conn,
+            url,
+            content_id=content_id,
+            fetched_at=fetched_at,
+            source_ip=content_store.resolve_source_ip(url),
+            status_code=getattr(response, "status_code", None),
+            response_headers=dict(getattr(response, "headers", {}) or {}),
+        )
+    except Exception as e:
+        logger.debug(f"Could not record download observation for {url}: {e}")
+
+
+def _store_downloaded_content(url, body, mime_type, fetched_at):
+    """
+    Deduplicate & persist a downloaded payload to disk and link it to an
+    observation row. Returns the content_id (or None when storage is
+    disabled/unavailable).
+    """
+    db_conn = globals().get("db")
+    if content_store is None or db_conn is None or not body:
+        return None
+    content_dir = getattr(config, "content_dir", None)
+    if not content_dir:
+        return None
+    try:
+        content_store.ensure_content_dir(content_dir)
+        info = content_store.get_or_create_content(db_conn, content_dir, body, mime_type=mime_type or None)
+        return info.get("id")
+    except Exception as e:
+        logger.warning(f"Could not store content for {url}: {e}")
+        return None
+
+
 def analyze_content(url):
     """
-    Download content from given URL and check its hash on VirusTotal / MalwareBazaar
+    Download the content of `url` and classify it by its SHA-1 hash.
+
+    Side effects (all best-effort, never breaking classification):
+      - records a download_observation row for every HTTP fetch (timestamp,
+        source IP, status code, response headers) via _record_fetch — both on
+        failure paths (no usable body, content_id=None) and on success
+      - stores the downloaded payload deduplicated on disk (keyed by SHA-256)
+        via _store_downloaded_content, linking it through content_id
+      - when the body is a shell script, extracts nested URLs from it
+        (search_for_nested_urls) and links them as derived-from `url`
+
+    Classification: SHA-1 hash of the body is looked up on MalwareBazaar,
+    then (if not found) on VirusTotal.
     """
 
     try:
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with requests.get(url, stream=True, proxies=proxies, timeout=10) as response:
             if not response.ok:
+                _record_fetch(url, response, content_id=None, fetched_at=fetched_at)
                 return dict(classification="unreachable", classification_reason=f"Status code {response.status_code}")
             if (content_size := response.headers.get('Content-Length')) is None:
+                _record_fetch(url, response, content_id=None, fetched_at=fetched_at)
                 return dict(classification="unclassified", classification_reason="No content")
             if (content_size_mb := int(content_size) / (1024 ** 2)) > config.max_file_size:
+                _record_fetch(url, response, content_id=None, fetched_at=fetched_at)
                 return dict(classification="unclassified", classification_reason=f"File too large: {content_size_mb:.2f} MB")
 
             # Determine file type
@@ -128,6 +193,10 @@ def analyze_content(url):
             # Search the downloaded content for new URLs
             if file_type in ["application/x-sh", "application/x-shellscript",  "text/plain", "text/x-shellscript", "text/x-sh"]:
                 search_for_nested_urls(response.content, url)
+
+            # Persist the raw payload (deduplicated) and log the fetch metadata
+            content_id = _store_downloaded_content(url, response.content, file_type, fetched_at)
+            _record_fetch(url, response, content_id=content_id, fetched_at=fetched_at)
 
             sha1 = hashlib.sha1(response.content).hexdigest()
             result = dict(hash=sha1, content_size=content_size)
@@ -201,12 +270,18 @@ def check_domain_threshold(url):
 def evaluate_url(url):
     """
     1. Check that the URL is valid
-    2. Check if the URL is listed on URLhaus blacklist
-    3. Check for entries on VirusTotal
-    4. Download and analyze the URL content
+    2. Check the global same-domain threshold (delete flood URLs)
+    3. Check if the URL is listed on URLhaus blacklist
+    4. Check for entries on VirusTotal
+    5. Download and analyze the URL content (analyze_content) — on every HTTP
+       fetch it also records a download_observation row (fetch timestamp,
+       source IP, status code, response headers) and, when the body is
+       usable, stores the payload deduplicated on disk (keyed by SHA-256):
+         - search for new URLs in downloaded shell scripts (search_for_nested_urls)
          - check hash on MalwareBazaar
          - check hash on VirusTotal
-         - search for new URLs in downloaded shell scripts
+    Returns a result dict, None when the URL was deleted by the domain
+    threshold, or evaluated=no/eval_later=yes when VT rate limit was hit.
     """
 
     result = dict(evaluated="yes", eval_later="no")
