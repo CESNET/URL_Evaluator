@@ -27,7 +27,11 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
     download_observation row and let the helper flag whether the content
     changed since the previous fetch.
     """
-    if content_store is None or body is None:
+    if content_store is None :
+        logger.warning("Content store module not available, skipping daily fetch record for %s", url)
+        return
+    if body is None:
+        logger.warning(f"Thread: no body for {url}, skipping daily fetch record")
         return
     content_dir = getattr(config, "content_dir", None)
     if not content_dir:
