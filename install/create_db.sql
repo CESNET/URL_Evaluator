@@ -164,7 +164,7 @@ CREATE TABLE sandbox_submissions
     submitted_at  TEXT NOT NULL,                    -- ISO timestamp (UTC) of submission
     submitted_by  TEXT,                             -- analyst username from the web UI
     status        TEXT NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('pending', 'done', 'failed', 'error')),
+                       CHECK (status IN ('pending', 'running', 'done', 'failed', 'error')),
     verdict       TEXT,                             -- e.g. 'malicious', 'clean', ...
     report_url    TEXT                              -- external report link (empty => placeholder)
 );
