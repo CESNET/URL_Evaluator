@@ -89,6 +89,18 @@
                     <td>Source</td>
                     <td>{{ url.src | join(', ') }}</td>
                 </tr>
+                <tr>
+                    <td>Derived from</td>
+                    <td>
+                        {% if derived_from and derived_from_in_db %}
+                            <a class="derived-link" href="{{ url_for('detail', url=derived_from, show=show) }}" title="URL Evaluator details">{{ derived_from }}</a>
+                        {% elif derived_from %}
+                            <span class="derived-link disabled">{{ derived_from }}</span>
+                        {% else %}
+                            <span class="derived-none">&mdash;</span>
+                        {% endif %}
+                    </td>
+                </tr>
 
                 {% if url.hash %}
                 <tr>
