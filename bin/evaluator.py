@@ -143,7 +143,15 @@ def _store_downloaded_content(url, body, mime_type, fetched_at):
         return None
     try:
         content_store.ensure_content_dir(content_dir)
-        info = content_store.get_or_create_content(db_conn, content_dir, body, mime_type=mime_type or None)
+        info = content_store.get_or_create_content(
+            db_conn, content_dir, body, mime_type=mime_type or None, url=url
+        )
+        if info is None:
+            logger.warning(
+                f"Content for {url} ({len(body)} bytes) could not be written to "
+                f"disk – skipping content record, observation will reference no payload"
+            )
+            return None
         return info.get("id")
     except Exception as e:
         logger.warning(f"Could not store content for {url}: {e}")

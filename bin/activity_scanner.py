@@ -35,14 +35,32 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
         return
     content_dir = getattr(config, "content_dir", None)
     if not content_dir:
+        logger.warning(
+            f"Thread: 'content_dir' is not configured, skipping content storage "
+            f"for {url} ({len(body)} bytes will not be persisted)"
+        )
         return
     try:
         # create content dir if not exists
         content_store.ensure_content_dir(content_dir)
+    except OSError as e:
+        logger.warning(
+            f"Thread: content directory {content_dir} is not usable "
+            f"(check permissions/mount), skipping content storage for {url}: {e}"
+        )
+        return
+    try:
         content_id = None
         if body:
-            info = content_store.get_or_create_content(db, content_dir, body)
-            content_id = info.get("id")
+            info = content_store.get_or_create_content(db, content_dir, body, url=url)
+            if info is None:
+                logger.warning(
+                    f"Thread: content for {url} ({len(body)} bytes) could not be "
+                    f"stored on disk – download observation will be recorded "
+                    f"without content (marked as unavailable)"
+                )
+            else:
+                content_id = info.get("id")
         content_store.record_download_observation(
             db,
             url,
@@ -53,7 +71,7 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
             response_headers=dict(getattr(response, "headers", {}) or {}),
         )
     except Exception as e:
-        logger.debug(f"Thread: could not record daily fetch for {url}: {e}")
+        logger.warning(f"Thread: could not record daily fetch for {url}: {e}")
 
 
 def thread_func(thread_id, urls):

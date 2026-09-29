@@ -58,17 +58,47 @@ def write_content_file(content_dir, sha256, data):
     Returns the absolute file path. If the file already exists (identical
     content was captured before), it is left untouched and the existing path
     is returned.
+
+    Raises OSError (with a detailed warning already logged) when the payload
+    cannot be written to disk.
     """
     path = content_file_path(content_dir, sha256)
     if os.path.exists(path):
         logger.debug(f"Content {sha256[:12]}… already stored at {path}")
         return path
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError as e:
+        logger.warning(
+            f"Could not create subdirectory for content {sha256} "
+            f"(target dir {os.path.dirname(path)}, size {len(data)} bytes): {e}"
+        )
+        raise
     # Write to a temp file then rename to avoid partial files on crash.
     tmp_path = path + ".tmp"
-    with open(tmp_path, "wb") as fh:
-        fh.write(data)
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(data)
+    except OSError as e:
+        logger.warning(
+            f"Could not write content file {tmp_path} (sha256={sha256}, "
+            f"size {len(data)} bytes) – check free disk space and permissions: {e}"
+        )
+        # Best-effort cleanup of the partial temp file.
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    try:
+        os.replace(tmp_path, path)
+    except OSError as e:
+        logger.warning(
+            f"Could not move temp file {tmp_path} to final location {path} "
+            f"(sha256={sha256}): {e}"
+        )
+        raise
     logger.info(f"Stored new content sample {sha256[:12]}… ({len(data)} bytes) at {path}")
     return path
 
@@ -92,12 +122,14 @@ def resolve_source_ip(url):
 # Database helpers
 # ---------------------------------------------------------------------------
 
-def get_or_create_content(db, content_dir, data, mime_type=None):
+def get_or_create_content(db, content_dir, data, mime_type=None, url=None):
     """
     Insert a content row for `data` (deduplicated by SHA-256) and store the
     payload on disk if it is new.
 
-    Returns a dict: {id, sha256, file_path, file_size, mime_type, created}
+    Returns a dict: {id, sha256, file_path, file_size, mime_type, created},
+    or None when the payload could not be written to disk (a detailed warning
+    is logged in that case).
     """
     sha256 = hashlib.sha256(data).hexdigest()
     row = db.execute(
@@ -114,7 +146,15 @@ def get_or_create_content(db, content_dir, data, mime_type=None):
             "created": False,
         }
 
-    file_path = write_content_file(content_dir, sha256, data)
+    try:
+        file_path = write_content_file(content_dir, sha256, data)
+    except OSError as e:
+        logger.warning(
+            f"Failed to store content {sha256} (size {len(data)} bytes"
+            f"{', url ' + url if url else ''}) to disk – content record "
+            f"will not be created: {e}"
+        )
+        return None
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     db.execute(
         """
