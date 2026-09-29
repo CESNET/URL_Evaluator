@@ -17,7 +17,7 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, get_domain
+from common.utils import is_valid, get_domain, split_url_lines, add_urls_bulk
 try:
     from common import content_store
 except Exception:
@@ -210,8 +210,16 @@ def list_all():
     if page_arg:
         page = int(page_arg)
 
-    # variables for adding new url
+    # variables for adding new urls (bulk add returns per-URL results)
     adding = ""
+    add_results = None
+
+    # quick URL search from the top search bar (GET keeps the query bookmarkable,
+    # POST form submits are redirected to the equivalent GET)
+    quick_search = flask.request.args.get('q')
+    if quick_search is not None:
+        page = 1
+        filter_params["url"] = quick_search.strip()
 
     # set filters
     if flask.request.method == 'POST':
@@ -239,18 +247,26 @@ def list_all():
         except BadRequestKeyError:
             pass
 
-        # add new url
+        # add new url(s) – the popup textarea accepts one URL per line (commas and
+        # whitespace also work as separators); each entry is validated and stored
+        # individually, per-URL results are shown to the analyst.
         try:
-            if (add_url := flask.request.form['add-url'].strip()) and is_valid(add_url):
+            raw_urls = flask.request.form['add-url']
+            candidates = split_url_lines(raw_urls)
+            if candidates:
                 with SQLiteWrapper(config.db_path) as db:
-                    t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
-                    if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
-                        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
-                        adding = "success"
-                    else:
-                        adding = "in_db"
+                    add_results = add_urls_bulk(db, candidates, source="Manual")
+                if add_results["added"] and not add_results["invalid"] and not add_results["in_db"]:
+                    # every submitted URL was newly added
+                    adding = "success"
+                elif add_results["added"]:
+                    # some URLs added, others were duplicates or invalid
+                    adding = "partial"
+                elif add_results["in_db"]:
+                    # nothing new: every valid URL was already stored
+                    adding = "in_db"
+                else:
+                    adding = "fail"
             else:
                 adding = "fail"
         except BadRequestKeyError:
@@ -283,7 +299,7 @@ def list_all():
         record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, url_list=url_list, order=order, key=order_key, show=show, adding=adding, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
+    return render_template('list_all.html', user=user, url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
 
 
 class URLDetail:

@@ -72,6 +72,73 @@ def get_domain(url: str):
         return None
 
 
+def split_url_lines(text):
+    """
+    Split a raw multi-line / multi-URL user input into individual URL candidates.
+
+    Accepts newline, comma and whitespace separated lists (the bulk-add popup
+    pastes one URL per line, but analysts often paste space/comma separated
+    lists too). Empty entries are dropped, order and duplicates are preserved
+    (deduplication happens against the DB, not the input).
+    """
+    if not text:
+        return []
+    # normalise separators to newlines, then split
+    normalised = text.replace(",", "\n").replace("\r", "\n")
+    candidates = []
+    for line in normalised.split("\n"):
+        for token in line.split():
+            token = token.strip()
+            if token:
+                candidates.append(token)
+    return candidates
+
+
+def add_urls_bulk(db, urls, source="Manual", seen_date=None):
+    """
+    Insert a batch of URLs into the DB (used by the web UI bulk-add popup).
+
+    Each URL is validated with is_valid(); invalid entries are skipped and
+    reported. URLs already present in the `urls` table are not duplicated –
+    instead their `last_seen` is refreshed and occurrences incremented
+    (consistent with the other collectors, e.g. honeynetasia2evaluator).
+
+    Parameters:
+        db        – an open SQLiteWrapper
+        urls      – iterable of URL strings (already split/trimmed)
+        source    – value written to url_source for newly inserted URLs
+        seen_date – optional 'YYYY-MM-DD' string; defaults to today (UTC)
+
+    Returns a dict with three lists: {
+        "added":   [urls that were newly inserted],
+        "in_db":   [urls that already existed (last_seen refreshed)],
+        "invalid": [urls that failed validation and were skipped],
+    }
+    """
+    from datetime import datetime, timezone
+    date = seen_date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    result = {"added": [], "in_db": [], "invalid": []}
+    for url in urls:
+        if not is_valid(url):
+            result["invalid"].append(url)
+            continue
+        existing = db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE urls SET last_seen = ?, occurrences = occurrences + 1 WHERE url = ?",
+                (date, url),
+            )
+            result["in_db"].append(url)
+        else:
+            db.execute(
+                "INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)",
+                (url, date, date, get_domain(url)),
+            )
+            db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+            result["added"].append(url)
+    return result
+
+
 def process_new_session(db, config, session, idea_id, detect_time, source, source_url, honeynet=None):
     """
     Process a new session:
