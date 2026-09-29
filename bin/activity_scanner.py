@@ -76,10 +76,12 @@ def thread_func(thread_id, urls):
                         try:
                             body = r.content
                         except Exception:
+                            logger.warning(f"Thread {thread_id}: Could not read response body for {url}, skipping content-change detection")
                             body = None
                     else:
                         new_status = "inactive"
             except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
+                logger.debug(f"Thread {thread_id}: Connection error or timeout for {url}, marking as inactive")
                 new_status = "inactive"
 
             # Daily content-change detection / history (best effort)
