@@ -298,11 +298,39 @@ def check_domain_threshold(url):
     """
 
     domain = db.execute("SELECT domain FROM urls WHERE url=?", (url,)).fetchone()[0]
-    urls_from_domain = tuple(u[0] for u in db.execute("SELECT url FROM urls WHERE domain=?", (domain,)).fetchall())
-    if len(urls_from_domain) > config.ddos_threshold["same_domain_all_sessions"]:
-        db.execute(f"DELETE FROM urls WHERE url IN {urls_from_domain} AND classification != 'malicious'")
-        logger.info(f"Deleted {len(urls_from_domain)} URLs from domain {domain} (global threshold exceeded)")
-        logger.debug(f"Deleted URLs: {urls_from_domain}")
+    # Only non-malicious URLs are flood candidates; parameterised (no string
+    # interpolation) and cascaded via ON DELETE CASCADE to dependent tables.
+    urls_to_delete = [
+        u[0] for u in db.execute(
+            "SELECT url FROM urls WHERE domain = ? AND classification != 'malicious'",
+            (domain,),
+        ).fetchall()
+    ]
+    urls_from_domain = db.execute(
+        "SELECT COUNT(*) FROM urls WHERE domain = ?", (domain,)
+    ).fetchone()[0]
+    if urls_from_domain > config.ddos_threshold["same_domain_all_sessions"]:
+        content_ids = set()
+        if content_store is not None and urls_to_delete:
+            try:
+                content_ids = {
+                    cid for cid, _ in content_store.content_ids_for_urls(db, urls_to_delete)
+                }
+            except Exception as e:
+                logger.warning(f"Could not resolve content for domain-flood URLs: {e}")
+        if content_store is not None:
+            content_store.delete_urls(db, urls_to_delete)
+        elif urls_to_delete:
+            # Fallback (content_store unavailable): plain parameterised delete.
+            placeholders = ",".join("?" for _ in urls_to_delete)
+            db.execute(f"DELETE FROM urls WHERE url IN ({placeholders})", urls_to_delete)
+        if content_store is not None and content_ids:
+            try:
+                content_store.cleanup_orphan_content(db, candidates=content_ids)
+            except Exception as e:
+                logger.warning(f"Orphan content cleanup failed (domain flood): {e}")
+        logger.info(f"Deleted {len(urls_to_delete)} URLs from domain {domain} (global threshold exceeded)")
+        logger.debug(f"Deleted URLs: {tuple(urls_to_delete)}")
         return True
 
 

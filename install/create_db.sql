@@ -8,8 +8,8 @@ CREATE TABLE sessions
 CREATE TABLE url_session
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    url     TEXT REFERENCES urls(url),
-    session TEXT REFERENCES sessions(session_hash),
+    url     TEXT REFERENCES urls(url) ON DELETE CASCADE,
+    session TEXT REFERENCES sessions(session_hash) ON DELETE CASCADE,
 
     CONSTRAINT url_session_unique UNIQUE (url, session)
 );
@@ -17,7 +17,7 @@ CREATE TABLE url_session
 CREATE TABLE url_source
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    url     TEXT REFERENCES urls(url),
+    url     TEXT REFERENCES urls(url) ON DELETE CASCADE,
     source  TEXT,
 
     CONSTRAINT url_source_unique UNIQUE (url, source)
@@ -26,8 +26,8 @@ CREATE TABLE url_source
 CREATE TABLE discovered_urls
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    url     TEXT REFERENCES urls(url),
-    src_url TEXT REFERENCES urls(url),
+    url     TEXT REFERENCES urls(url) ON DELETE CASCADE,
+    src_url TEXT REFERENCES urls(url) ON DELETE CASCADE,
 
     CONSTRAINT discovered_urls_unique UNIQUE (url, src_url)
 );
@@ -60,10 +60,10 @@ CREATE TABLE urls
 CREATE TABLE observations
 (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    url         TEXT NOT NULL REFERENCES urls(url),
+    url         TEXT NOT NULL REFERENCES urls(url) ON DELETE CASCADE,
     source      TEXT NOT NULL,
     honeynet    TEXT,
-    session     TEXT REFERENCES sessions(session_hash),
+    session     TEXT REFERENCES sessions(session_hash) ON DELETE CASCADE,
     observed_at TEXT NOT NULL,
     -- NULL-normalized dedupe key: UNIQUE on NULLable columns does not dedupe in SQLite,
     -- so idempotent INSERT OR IGNORE relies on this generated key instead
@@ -87,7 +87,7 @@ CREATE INDEX idx_observations_observed_at   ON observations(observed_at);
 CREATE TABLE classification_history
 (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    url            TEXT NOT NULL REFERENCES urls(url),
+    url            TEXT NOT NULL REFERENCES urls(url) ON DELETE CASCADE,
     classification TEXT NOT NULL,
     reason         TEXT,
     note           TEXT,
@@ -132,7 +132,10 @@ CREATE INDEX idx_content_sha256 ON content(sha256);
 CREATE TABLE download_observations
 (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    url             TEXT NOT NULL REFERENCES urls(url),
+    url             TEXT NOT NULL REFERENCES urls(url) ON DELETE CASCADE,
+    -- NOTE: intentionally NO "ON DELETE CASCADE" on content_id -- content
+    -- samples may be shared between URLs; removing them is a conditional,
+    -- application-level step (see content_store.cleanup_orphan_content).
     content_id      INTEGER REFERENCES content(id),
     fetched_at      TEXT NOT NULL,        -- ISO timestamp of the request
     source_ip       TEXT,                 -- remote IP the content was served from

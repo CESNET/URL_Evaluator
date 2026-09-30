@@ -103,6 +103,155 @@ def write_content_file(content_dir, sha256, data):
     return path
 
 
+def remove_content_file(file_path):
+    """
+    Best-effort removal of a stored payload from disk.
+
+    Returns True when the file is gone (deleted now or already missing),
+    False when the unlink failed (a warning is logged in that case).
+    Never raises -- a filesystem problem must not break DB cleanup.
+    """
+    if not file_path:
+        return False
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info(f"Removed content file {file_path}")
+        else:
+            logger.debug(f"Content file {file_path} already missing on disk")
+        return True
+    except OSError as e:
+        logger.warning(f"Could not remove content file {file_path}: {e}")
+        return False
+
+
+def _delete_ids_generic(db, table, column, ids):
+    """
+    Internal helper: delete rows from `table` where `column` matches one of
+    `ids`, using a parameterised IN clause (never string-formatted values).
+    Commits via the wrapper's execute(); returns rows affected.
+    """
+    ids = list(ids)
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    return db.execute(
+        f"DELETE FROM {table} WHERE {column} IN ({placeholders})", ids
+    ).rowcount
+
+
+def delete_urls(db, urls):
+    """
+    Delete one or more URLs (and, thanks to ON DELETE CASCADE, every record
+    bound to them: observations, classification_history, url_session,
+    url_source, discovered_urls, download_observations).
+
+    The given URL table rows are removed in a parameterised query. With
+    foreign-key enforcement enabled (SQLiteWrapper sets PRAGMA
+    foreign_keys=ON), the associated rows are cascaded in the same statement.
+
+    Returns the number of URL rows deleted.
+    """
+    return _delete_ids_generic(db, "urls", "url", urls)
+
+
+def content_ids_for_urls(db, urls):
+    """
+    Return a set of (content_id, file_path) pairs referenced by download
+    observations of the given URLs -- used to decide (after the URLs are
+    deleted) which payloads have become unreferenced and can be purged.
+    """
+    urls = list(urls)
+    if not urls:
+        return set()
+    placeholders = ",".join("?" for _ in urls)
+    rows = db.execute(
+        f"""
+        SELECT DISTINCT d.content_id, c.file_path
+        FROM download_observations AS d
+        JOIN content AS c ON c.id = d.content_id
+        WHERE d.url IN ({placeholders}) AND d.content_id IS NOT NULL
+        """,
+        urls,
+    ).fetchall()
+    return {(row[0], row[1]) for row in rows if row[0] is not None}
+
+
+def cleanup_orphan_content(db, candidates=None, remove_files=True):
+    """
+    Conditional disk/DB cleanup of deduplicated content (F7).
+
+    A content row is only ever removed when *no* `download_observations` row
+    in the whole database references it anymore (i.e. its payload is not
+    shared with any other, still-known URL). This guarantees the property
+    "delete the malware sample file from disk only when it is no longer used
+    by any URL".
+
+    `candidates` may restrict the check to an iterable of content ids (e.g.
+    the ids that were referenced by the just-deleted URLs) for efficiency;
+    when None, every content row is checked.
+
+    For each unreferenced content row the payload file is unlinked first
+    (best-effort via remove_content_file) and the metadata row is removed
+    from the `content` table afterwards. `sandbox_submissions` rows are kept
+    by design: they carry the denormalised sha256 and remain meaningful even
+    after the sample is purged. Their content_id FK is left untouched --
+    after the content row is removed it simply no longer resolves. To keep
+    FK enforcement satisfied we NULL the reference out first.
+
+    Returns a summary dict {"removed": n, "skipped_shared": m, "file_errors": k}.
+    """
+    removed = 0
+    skipped_shared = 0
+    file_errors = 0
+
+    if candidates is not None:
+        candidates = [int(c) for c in candidates if c is not None]
+        if not candidates:
+            return {"removed": 0, "skipped_shared": 0, "file_errors": 0}
+        placeholders = ",".join("?" for _ in candidates)
+        rows = db.execute(
+            f"SELECT id, file_path FROM content WHERE id IN ({placeholders})",
+            candidates,
+        ).fetchall()
+    else:
+        rows = db.execute("SELECT id, file_path FROM content").fetchall()
+
+    for content_id, file_path in rows:
+        # Shared-content guard (F5): is the payload still referenced by any
+        # (other) download observation in the DB?
+        in_use = db.execute(
+            "SELECT 1 FROM download_observations WHERE content_id = ? LIMIT 1",
+            (content_id,),
+        ).fetchone()
+        if in_use:
+            skipped_shared += 1
+            logger.debug(
+                f"Content {content_id} is still shared by other URLs -- kept"
+            )
+            continue
+
+        # Remove the payload file from disk before deleting the DB row, so a
+        # filesystem failure does not strand a DB row pointing at nothing.
+        if remove_files and file_path:
+            if not remove_content_file(file_path):
+                file_errors += 1
+
+        # Detach sandbox submission rows so the non-cascading FK to content
+        # is satisfied when the content row disappears (submission records
+        # stay meaningful via their denormalised sha256).
+        db.execute(
+            "UPDATE sandbox_submissions SET content_id = NULL WHERE content_id = ?",
+            (content_id,),
+        )
+        db.execute("DELETE FROM content WHERE id = ?", (content_id,))
+        removed += 1
+
+    summary = {"removed": removed, "skipped_shared": skipped_shared, "file_errors": file_errors}
+    logger.info(f"Content cleanup: {summary}")
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Network helpers
 # ---------------------------------------------------------------------------

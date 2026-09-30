@@ -16,6 +16,10 @@ class SQLiteWrapper:
             self.conn = sqlite3.connect(db_path, timeout=30.0)
             self.cursor = self.conn.cursor()
             self.conn.execute('PRAGMA journal_mode=WAL')
+            # Enforce foreign key constraints (incl. ON DELETE CASCADE rules
+            # introduced by migration 005). SQLite keeps this off by default
+            # for backwards compatibility, so every connection must enable it.
+            self.conn.execute('PRAGMA foreign_keys=ON')
         except Exception as e:
             logger.exception(f"Error connecting to DB: {e}")
             raise
@@ -54,6 +58,29 @@ class SQLiteWrapper:
             self.conn.rollback()
             raise
         return self.cursor
+
+    def execute_many(self, statements):
+        """
+        Execute several SQL statements atomically inside a single transaction.
+
+        `statements` is an iterable of (query, params) tuples. Either every
+        statement is committed (returns the cursor of the last one) or the
+        whole batch is rolled back and the exception is re-raised -- partial
+        writes are never persisted. Use this for operations that must stay
+        consistent, e.g. deleting a URL together with its dependent data.
+        """
+        try:
+            self.conn.execute("BEGIN")
+            last_cursor = None
+            for query, params in statements:
+                logger.debug(f"Executing SQL (txn): {query}")
+                last_cursor = self.cursor.execute(query, params if params else [])
+            self.conn.commit()
+            return last_cursor
+        except Exception as e:
+            logger.exception(f"Error executing transactional batch: {e}")
+            self.conn.rollback()
+            raise
 
     def record_classification(self, url, classification, reason=None, note=None, actor="system"):
         """

@@ -4,6 +4,11 @@ import logging
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
+try:
+    from common import content_store
+except Exception:  # pragma: no cover - optional dependency at import time
+    content_store = None
+
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
 LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
 logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
@@ -213,7 +218,25 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
         domain_map[domain].append(url)
     for domain, urls in domain_map.items():
         if len(urls) > config.ddos_threshold["same_domain_single_session"]:
-            db.execute(f"DELETE FROM urls WHERE url IN {tuple(urls)}")
+            content_ids = set()
+            if content_store is not None:
+                try:
+                    content_ids = {
+                        cid for cid, _ in content_store.content_ids_for_urls(db, urls)
+                    }
+                except Exception as e:
+                    logger.warning(f"Could not resolve content for session-flood URLs: {e}")
+            if content_store is not None:
+                content_store.delete_urls(db, urls)
+            else:
+                # Fallback (content_store unavailable): parameterised delete.
+                placeholders = ",".join("?" for _ in urls)
+                db.execute(f"DELETE FROM urls WHERE url IN ({placeholders})", list(urls))
+            if content_store is not None and content_ids:
+                try:
+                    content_store.cleanup_orphan_content(db, candidates=content_ids)
+                except Exception as e:
+                    logger.warning(f"Orphan content cleanup failed (session flood): {e}")
             logger.info(f"Deleted {len(urls)} URLs from domain {domain} (session threshold exceeded)")
             logger.debug(f"Deleted URLs: {urls}")
 
