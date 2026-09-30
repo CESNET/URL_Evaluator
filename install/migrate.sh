@@ -2,10 +2,12 @@
 # Migrates the url_evaluator SQLite database to the newest schema version.
 #
 # Workflow:
-#   1. Delete any previous backup in the backup directory.
-#   2. Backup the current active DB into the backup directory (kept until next run).
-#   3. Apply every not-yet-applied migration from install/migrations/*.sql in order,
-#      recording each applied file in the schema_migrations table.
+#   1. Detect pending (not-yet-applied) migrations from install/migrations/*.sql.
+#      If none are pending, exit cleanly without touching the DB or backup dir.
+#   2. Delete any previous backup in the backup directory.
+#   3. Backup the current active DB into the backup directory (kept until next run).
+#   4. Apply every pending migration in order, recording each applied file in
+#      the schema_migrations table.
 #
 # The migration SQL files are the only part that changes as new versions are released.
 
@@ -45,7 +47,29 @@ if [ ! -f "$DB_PATH" ]; then
     exit 1
 fi
 
-# --- 1. Cleanup old backup (from the previous migration run) ---
+# --- 1. Detect pending migrations first (no side effects if none) ---
+sqlite3 "$DB_PATH" "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));"
+
+pending=""
+# Use find + sort to guarantee right order of migrations (001, 002, ...)
+for migration in $(find "$MIGRATIONS_DIR" -maxdepth 1 -name "*.sql" | sort); do
+    [ -e "$migration" ] || continue
+    name=$(basename "$migration")
+    already=$(sqlite3 "$DB_PATH" "SELECT 1 FROM schema_migrations WHERE name='$name' LIMIT 1;")
+    if [ "$already" != "1" ]; then
+        # Append migration path on its own line
+        pending="${pending}${migration}
+"
+    fi
+done
+
+# If nothing is pending, exit cleanly (no backup churn, no deletes).
+if [ -z "$pending" ]; then
+    echob "** No pending migrations - skipping backup and exiting **"
+    exit 0
+fi
+
+# --- 2. Cleanup old backup (from the previous migration run) ---
 echob "** Cleaning up old backup **"
 mkdir -p "$BACKUP_DIR"
 if [ -f "$BACKUP_FILE" ]; then
@@ -55,7 +79,7 @@ else
     echo "No previous backup to remove"
 fi
 
-# --- 2. Backup the current active DB (transaction-safe) ---
+# --- 3. Backup the current active DB (transaction-safe) ---
 echob "** Backing up current DB **"
 if ! sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"; then
     echor "Backup failed, aborting migration (DB left untouched)"
@@ -63,22 +87,19 @@ if ! sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"; then
 fi
 echo "Backup stored at $BACKUP_FILE"
 
-# --- 3. Apply pending migrations in order ---
+# --- 4. Apply pending migrations in order ---
 echob "** Applying migrations **"
-sqlite3 "$DB_PATH" "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));"
 
 applied=0
-# Use find + sort to garant right order of migrations (001, 002, ...)
-for migration in $(find "$MIGRATIONS_DIR" -maxdepth 1 -name "*.sql" | sort); do
-    [ -e "$migration" ] || continue
+# Iterate over the collected pending list (already sorted). Use a positional
+# parameter trick to avoid running the loop in a subshell on POSIX sh, so the
+# `applied` counter persists after the loop.
+set -- $pending
+for migration do
+    [ -n "$migration" ] || continue
     name=$(basename "$migration")
-    already=$(sqlite3 "$DB_PATH" "SELECT 1 FROM schema_migrations WHERE name='$name' LIMIT 1;")
-    if [ "$already" = "1" ]; then
-        echo "Skipping $name (already applied)"
-        continue
-    fi
     echo "Applying $name ..."
-    
+
     if sqlite3 "$DB_PATH" ".bail on" ".read $migration"; then
         sqlite3 "$DB_PATH" "INSERT INTO schema_migrations (name) VALUES ('$name');"
         echo "Applied $name"
@@ -88,10 +109,6 @@ for migration in $(find "$MIGRATIONS_DIR" -maxdepth 1 -name "*.sql" | sort); do
         exit 1
     fi
 done
-
-if [ "$applied" -eq 0 ]; then
-    echo "No new migrations found in $MIGRATIONS_DIR"
-fi
 
 echob "** Migration finished: $applied applied, backup kept at $BACKUP_FILE **"
 exit 0
