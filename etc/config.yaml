@@ -1,6 +1,11 @@
 # Path to database file
 db_path: "/data/url_evaluator/db.sqlite"
 
+# Directory where downloaded URL content (malware samples) is stored.
+# Files are deduplicated by SHA-256 and sharded into subdirectories;
+# the SQLite DB only stores metadata + the path to each file.
+content_dir: "/data/url_evaluator/content"
+
 # Scheduler config
 # Uses common cron-style format, e.g.:
 #   hour: */4
