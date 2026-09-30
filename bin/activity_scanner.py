@@ -27,40 +27,42 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
     download_observation row and let the helper flag whether the content
     changed since the previous fetch.
     """
-    if content_store is None :
+    if content_store is None:
         logger.warning("Content store module not available, skipping daily fetch record for %s", url)
         return
+
+    content_id = None
     if body is None:
-        logger.warning(f"Thread: no body for {url}, skipping daily fetch record")
-        return
-    content_dir = getattr(config, "content_dir", None)
-    if not content_dir:
-        logger.warning(
-            f"Thread: 'content_dir' is not configured, skipping content storage "
-            f"for {url} ({len(body)} bytes will not be persisted)"
-        )
-        return
-    try:
-        # create content dir if not exists
-        content_store.ensure_content_dir(content_dir)
-    except OSError as e:
-        logger.warning(
-            f"Thread: content directory {content_dir} is not usable "
-            f"(check permissions/mount), skipping content storage for {url}: {e}"
-        )
-        return
-    try:
-        content_id = None
-        if body:
-            info = content_store.get_or_create_content(db, content_dir, body, url=url)
-            if info is None:
+        # No body to store (e.g. error response), but the download observation
+        # (status code, headers, ...) is still recorded below.
+        logger.warning(f"Thread: no body for {url}, status code is {getattr(response, 'status_code', None)} – recording observation without content")
+    else:
+        content_dir = getattr(config, "content_dir", None)
+        if not content_dir:
+            logger.warning(
+                f"Thread: 'content_dir' is not configured, skipping content storage "
+                f"for {url} ({len(body)} bytes will not be persisted)"
+            )
+        else:
+            try:
+                # create content dir if not exists
+                content_store.ensure_content_dir(content_dir)
+            except OSError as e:
                 logger.warning(
-                    f"Thread: content for {url} ({len(body)} bytes) could not be "
-                    f"stored on disk – download observation will be recorded "
-                    f"without content (marked as unavailable)"
+                    f"Thread: content directory {content_dir} is not usable "
+                    f"(check permissions/mount), skipping content storage for {url}: {e}"
                 )
             else:
-                content_id = info.get("id")
+                info = content_store.get_or_create_content(db, content_dir, body, url=url)
+                if info is None:
+                    logger.warning(
+                        f"Thread: content for {url} ({len(body)} bytes) could not be "
+                        f"stored on disk – download observation will be recorded "
+                        f"without content (marked as unavailable)"
+                    )
+                else:
+                    content_id = info.get("id")
+    try:
         content_store.record_download_observation(
             db,
             url,
