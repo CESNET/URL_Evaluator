@@ -255,7 +255,7 @@ def list_all():
             candidates = split_url_lines(raw_urls)
             if candidates:
                 with SQLiteWrapper(config.db_path) as db:
-                    add_results = add_urls_bulk(db, candidates, source="Manual")
+                    add_results = add_urls_bulk(db, candidates, source="Manual", username=user)
                 if add_results["added"] and not add_results["invalid"] and not add_results["in_db"]:
                     # every submitted URL was newly added
                     adding = "success"

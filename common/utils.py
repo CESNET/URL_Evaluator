@@ -94,7 +94,7 @@ def split_url_lines(text):
     return candidates
 
 
-def add_urls_bulk(db, urls, source="Manual", seen_date=None):
+def add_urls_bulk(db, urls, source="Manual", seen_date=None, username=None):
     """
     Insert a batch of URLs into the DB (used by the web UI bulk-add popup).
 
@@ -108,6 +108,9 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None):
         urls      – iterable of URL strings (already split/trimmed)
         source    – value written to url_source for newly inserted URLs
         seen_date – optional 'YYYY-MM-DD' string; defaults to today (UTC)
+        username  – analyst username recorded in the observations table as the
+                    "honeynet"/actor for manual entries (shows up in the GUI
+                    Sources tab)
 
     Returns a dict with three lists: {
         "added":   [urls that were newly inserted],
@@ -135,6 +138,12 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None):
                 (url, date, date, get_domain(url)),
             )
             db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+            db.execute(
+                """INSERT OR IGNORE INTO observations
+                   (url, source, honeynet, session, observed_at)
+                   VALUES (?, ?, ?, NULL, ?)""",
+                (url, source, "Manual by " + username if username else source, date),
+            )
             result["added"].append(url)
     return result
 
