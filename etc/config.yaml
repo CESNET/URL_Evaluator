@@ -62,11 +62,12 @@ warden_config: "/etc/url_evaluator/warden_client.cfg"
 warden_filter:
   cat: "Intrusion.UserCompromise"
 
-# Warden source mapping (dict[source -> dict[idea_field -> regex]])
-# Events that do not match any of the listed patterns will be ignored
+# Warden source mapping (dict[source -> dict[field -> regex]])
+# Events not matching any source will be ignored
 warden_sources:
   "CESNET Hugo":
     "Node.SW": "Cowrie with Warden Filer"
+    "Node.SW": "hugo-cowrie"
   "CZ.NIC HaaS":
     "Node.Name": "cznic_haas"
   "Warden (unknown node)": {}  # matches everything
