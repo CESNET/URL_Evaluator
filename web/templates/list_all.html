@@ -99,6 +99,15 @@
             <option {%if filter_params["status"]=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
           </select>
         </div>
+
+        <div>
+          <label class="filter-label" for="has_content">Content:</label>
+          <select name="has_content" id="filter-has-content">
+            <option selected value="">---select---</option>
+            <option {%if filter_params["has_content"]=='yes' %} selected {% endif %} value="yes">Has content</option>
+            <option {%if filter_params["has_content"]=='no' %} selected {% endif %} value="no">No content</option>
+          </select>
+        </div>
       </div>
 
       <button class="btn-style filter-submit" type="submit">Search</button>

@@ -175,6 +175,21 @@ def parse_filters():
             parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
         if param == "evaluated":
             parsed_filters += f" AND evaluated='{value}'"
+        # Filter on whether the URL has any stored (downloadable) content.
+        # "yes" -> at least one download_observations row references a content
+        # row; "no" -> no such row. Uses EXISTS/NOT EXISTS against
+        # download_observations joined to content so orphaned content_ids are
+        # not counted as available.
+        if param == "has_content":
+            exists_clause = (
+                "EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url AND d.content_id IS NOT NULL)"
+            )
+            if value == "yes":
+                parsed_filters += f" AND {exists_clause}"
+            elif value == "no":
+                parsed_filters += f" AND NOT {exists_clause}"
     parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
 
@@ -244,6 +259,9 @@ def list_all():
 
             filter_src = flask.request.form['src'].strip()
             filter_params["src"] = filter_src
+
+            filter_has_content = flask.request.form.get('has_content', '').strip()
+            filter_params["has_content"] = filter_has_content
         except BadRequestKeyError:
             pass
 
