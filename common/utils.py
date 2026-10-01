@@ -188,14 +188,10 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
         """, (session_hash, session, idea_id)
     )
     for url, occurrences in Counter(extracted_urls).items():
-        db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
-        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
-        db.execute(
-            "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
-            (url, source, honeynet, session_hash, detect_time)
-        )
-        if source_url:
-            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
+        # Insert the parent `urls` row FIRST: with PRAGMA foreign_keys=ON
+        # the dependent tables (url_session, url_source,
+        # observations, discovered_urls) reference urls.url, so inserting them
+        # before the parent row exists raises "FOREIGN KEY constraint failed".
         db.execute(
             """
             INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)
@@ -205,6 +201,16 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
             """, (url, date, date, url_domain[url]))
         if db.cursor.lastrowid:
             inserted_urls.append(url)
+
+        # Now that the parent row exists, record its dependent relations.
+        db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
+        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+        db.execute(
+            "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+            (url, source, honeynet, session_hash, detect_time)
+        )
+        if source_url:
+            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
 
         # Check the number of occurrences of the same URL
         if occurrences > config.ddos_threshold["same_url_single_session"]:
