@@ -248,6 +248,9 @@ form.selected-urls button {
   display: flex;
   justify-content: right;
   align-items: center;
+  /* Push the group to the far right even when it is the only .btn-line child
+     (e.g. the left "Select" group is hidden to anonymous users). */
+  margin-left: auto;
 }
 
 .filter-btn button {
@@ -325,15 +328,129 @@ select {
 
 .active-add {
   display: flex !important;
+  flex-direction: column;
+}
+
+#add-url-wrap form {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+#add-url-wrap .add-url-hint {
+  margin: 2px 0 6px;
+  padding: 0;
+  font-size: 12px;
+  color: #666;
+}
+
+#add-url-wrap textarea.filter-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: monospace;
+  line-height: 1.5;
+}
+
+#add-url-wrap button[type="submit"] {
+  align-self: flex-end;
+  margin-top: 4px;
+}
+
+/* per-URL result report shown after a bulk add */
+.add-url-results {
+  width: 100%;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.add-url-result {
+  margin-bottom: 8px;
+}
+
+.add-url-result ul {
+  margin: 4px 0;
+  padding-left: 20px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: monospace;
+}
+
+.add-url-result.added strong {
+  color: #1c7c1c;
+}
+
+.add-url-result.in-db strong {
+  color: #8a6d00;
+}
+
+.add-url-result.invalid strong {
+  color: #b02a2a;
+}
+
+/* Quick URL search bar at the top of the main page (Figma mockup) */
+.quick-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 90%;
+  min-width: 300px;
+  max-width: 1200px;
+  margin: 20px auto 10px;
+}
+
+.quick-search-icon {
+  position: absolute;
+  left: 14px;
+  color: #8a8a8a;
+  pointer-events: none;
+  display: flex;
+}
+
+.quick-search input {
+  width: 100%;
+  height: 40px;
+  padding: 0 40px 0 40px;
+  border-radius: 20px;
+  border: 1px solid #cbcbcb;
+  background-color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.quick-search input:focus {
+  border-color: #222;
+  box-shadow: 0 0 0 2px rgba(34, 34, 34, 0.08);
+}
+
+.quick-search-clear {
+  position: absolute;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #8a8a8a;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quick-search-clear:hover {
+  background-color: #22222222;
+  color: #222;
 }
 
 .add-response {
-  position: absolute;
+  /* In normal flow (not absolutely positioned) so the banner never overlaps
+     the quick search bar sitting at the top of the page. */
   width: 400px;
+  max-width: 90%;
   height: 50px;
-  /* margin: 20px auto; */
-  top: 80px;
-  left: calc(50% - 200px);
+  margin: 15px auto 5px;
   color: white;
   text-align: center;
   border-radius: 25px;

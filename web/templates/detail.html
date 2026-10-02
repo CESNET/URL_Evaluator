@@ -1,14 +1,14 @@
 {% extends "main.html" %}
 
 {% block content %}
-<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 
-    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated, 
-    12. file_mime_type, 13. content_size, 14. threat_label 
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification,
+    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated,
+    12. file_mime_type, 13. content_size, 14. threat_label
     15. status, 16. active_last, 17. last_edit-->
 <div class="detail">
     <div class="wrap">
         <div class="header-wrap">
-            {% if url["status"] == 'active' %} 
+            {% if url["status"] == 'active' %}
                 <svg height="20" width="20">
                     <circle cx="5" cy="10" r="5" fill="green" />
                 </svg>
@@ -16,13 +16,35 @@
             <h2
                 class="classification {{url.classification}}">
                 {{ url.url }}</h2>
-            
+
             {% if url.evaluated == 'no' %} <p class="to-be-evaluated">to be evaluated</p>{% endif %}
             {% if url.eval_later == 'yes' %} <p class="to-be-evaluated">URL will be re-evaluated after VirusTotal API limit is reset</p>{% endif %}
+            {% if not is_anon %}
             <button title="Edit" class="edit_btn"
                 onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
+            {% endif %}
         </div>
 
+        <!-- Tab navigation (layout per Figma, restyled to app light theme) -->
+        <nav class="detail-tabs">
+            <a class="detail-tab {% if tab == 'overview' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='overview') }}">Overview</a>
+            <a class="detail-tab {% if tab == 'content' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='content') }}">Content
+                {% if tab_counts.content %}<span class="tab-badge">{{ tab_counts.content }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'sources' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">Sources
+                {% if tab_counts.sources %}<span class="tab-badge">{{ tab_counts.sources }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'sandbox' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">Sandbox
+                {% if tab_counts.sandbox %}<span class="tab-badge">{{ tab_counts.sandbox }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'class_history' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='class_history') }}">Class. History
+                {% if tab_counts.class_history %}<span class="tab-badge">{{ tab_counts.class_history }}</span>{% endif %}</a>
+        </nav>
+
+        {# ============ TAB: OVERVIEW (existing detail content, unchanged) ============ #}
+        {% if tab == 'overview' %}
         <div class="content">
         <table class="info">
             <tbody>
@@ -69,11 +91,23 @@
                     <td>Source</td>
                     <td>{{ url.src | join(', ') }}</td>
                 </tr>
+                <tr>
+                    <td>Derived from</td>
+                    <td>
+                        {% if derived_from and derived_from_in_db %}
+                            <a class="derived-link" href="{{ url_for('detail', url=derived_from, show=show) }}" title="URL Evaluator details">{{ derived_from }}</a>
+                        {% elif derived_from %}
+                            <span class="derived-link disabled">{{ derived_from }}</span>
+                        {% else %}
+                            <span class="derived-none">&mdash;</span>
+                        {% endif %}
+                    </td>
+                </tr>
 
                 {% if url.hash %}
                 <tr>
                     <td>Hash</td>
-                    
+
                     <td>
                         <div class="reason-link">
                             <p>{{ url.hash }}</p>
@@ -89,7 +123,7 @@
                         <p>{{ url.vt_stats }}</p>
                             {% if link %}
                                 <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
-                            {% endif %} 
+                            {% endif %}
                         </div></td>
                 </tr>
                 {% endif %}
@@ -141,7 +175,6 @@
                         <a class="ip" href="https://nerd.cesnet.cz/nerd/ip/{{ url.ip }}" target="_blank" title="NERD"><img class="nerd-img" src="{{ url_for("static", filename="img/nerd.png") }}" alt="NERD">
                             {{ url.ip }}
                         </a>
-                        <!-- <p></p> -->
                     </td>
                 </tr>
                 {% endif %}
@@ -191,10 +224,182 @@
             </dd>
             </dl>
         {% endif %}
-
         </div>
+        {% endif %}
 
-    </div> 
+        {# ============ TAB: SOURCES (observations aggregated per honeynet) ============ #}
+        {% if tab == 'sources' %}
+        <div class="content">
+            {% if observations %}
+            <table class="sources-table">
+                <thead>
+                    <tr>
+                        <th>Honeynet</th>
+                        <th>First observed</th>
+                        <th>Last observed</th>
+                        <th>Occurrences</th>
+                        <th>Derived from</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for obs in observations %}
+                    <tr>
+                        <td><span class="honeynet-chip">{{ obs[0] }}</span></td>
+                        <td>{{ obs[1][:10] }}</td>
+                        <td>{{ obs[2][:10] }}</td>
+                        <td class="occurrences">{{ obs[3] }}</td>
+                        <td>
+                            {% if derived_from and derived_from_in_db %}
+                                <a class="derived-link" href="{{ url_for('detail', url=derived_from, show=show) }}" title="URL Evaluator details">{{ derived_from }}</a>
+                            {% elif derived_from %}
+                                <span class="derived-link disabled">{{ derived_from }}</span>
+                            {% else %}
+                                <span class="derived-none">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="tab-empty">No observations recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# ============ TAB: CONTENT (download observations / versions per Figma) ============ #}
+        {% if tab == 'content' %}
+        <div class="content content-tab">
+            {% if content_versions %}
+            <div class="content-meta">
+                <p class="content-meta-note">Content is polled daily. Identical responses are grouped &mdash; only distinct versions are shown.</p>
+                {% if content_range_start and content_range_end %}
+                <p class="content-range">{{ content_range_start }} &nbsp;&ndash;&nbsp; {{ content_range_end }}</p>
+                {% endif %}
+            </div>
+
+            {# Render newest version first (mockup shows Version 2 above Version 1) #}
+            {% for v in content_versions | reverse %}
+            <section class="version-card {% if v.changed %}changed{% endif %}">
+                <header class="version-card-head">
+                    <div class="version-card-title">
+                        <h3>Version {{ v.version }}</h3>
+                        {% if v.changed %}<span class="badge-changed">content changed</span>{% endif %}
+                    </div>
+                    {% if v.status_code %}<span class="version-status">HTTP {{ v.status_code }}</span>{% endif %}
+                </header>
+
+                <table class="version-card-body">
+                    <tbody>
+                        <tr>
+                            <td>Observed</td>
+                            <td>{{ v.first_fetched|fmt_ts }} &rarr; {{ v.last_fetched|fmt_ts }}</td>
+                        </tr>
+                        <tr>
+                            <td>Fetch count</td>
+                            <td>{{ v.fetch_count }}&times; confirmed identical</td>
+                        </tr>
+                        {% if v.source_ip %}
+                        <tr>
+                            <td>Downloaded from</td>
+                            <td>{{ v.source_ip }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.sha256 %}
+                        <tr>
+                            <td>SHA-256</td>
+                            <td class="mono">{{ v.sha256 }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.file_size is not none %}
+                        <tr>
+                            <td>Size</td>
+                            <td>{{ v.file_size|human_bytes }}</td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td>Sandbox</td>
+                            <td>
+                                TBD
+                                <!--
+                                <span class="classification {{ current_classification }} classification-inline">{{ current_classification }}</span>
+                                <span class="sandbox-sep">&middot;</span>
+                                <span class="sandbox-name">PSNC Sandbox</span>
+                                <a class="sandbox-report" href="{{ links['joe-sandbox'] }}" target="_blank">report &rarr;</a>-->
+                            </td>
+                        </tr>
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Download</td>
+                            <td>
+                                <a class="download-link mono" href="{{ url_for('download_content', content_id=v.content_id) }}">
+                                    &#8681; {{ (v.sha256 or 'sample')[:32] }}.bin
+                                </a>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if v.response_headers %}
+                        <tr>
+                            <td>HTTP headers</td>
+                            <td class="headers mono">
+                                {% for k, val in v.response_headers.items() %}
+                                <div><span class="header-key">{{ k }}:</span> {{ val }}</div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </section>
+            {% endfor %}
+            {% else %}
+            <p class="tab-empty">No downloaded content recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# ============ TAB: SANDBOX (placeholder) ============ #}
+        {% if tab == 'sandbox' %}
+        <div class="content"><p class="tab-empty">Sandbox analysis coming soon.</p></div>
+        {% endif %}
+
+        {# ============ TAB: CLASSIFICATION HISTORY (timeline per Figma) ============ #}
+        {% if tab == 'class_history' %}
+        <div class="content">
+            {% if class_history %}
+            <ul class="class-history">
+                {% for entry in class_history %}
+                {# entry: 0 classification, 1 reason, 2 note, 3 actor, 4 created_at #}
+                <li class="class-history-item classification-{{ entry[0] }}">
+                    <span class="ch-node" aria-hidden="true"></span>
+                    <div class="ch-body">
+                        <div class="ch-head">
+                            {# For old db data, which not store time of evaluation by system
+                                display only date instead zero time placeholder #}
+                            {% set ch_ts = entry[4] or '' %}
+                            {% if ch_ts.endswith('00:00:00') %}
+                                <span class="ch-time">{{ ch_ts[:10] }}</span>
+                            {% else %}
+                                <span class="ch-time">{{ ch_ts }} UTC</span>
+                            {% endif %}
+                            <span class="ch-class"><span class="ch-dot"></span>{{ entry[0] }}</span>
+                            {% if entry[1] %}<span class="ch-reason">{{ entry[1] }}</span>{% endif %}
+                            <span class="ch-actor">{{ entry[3] }}</span>
+                        </div>
+                        {% if entry[2] %}
+                        <p class="ch-note">{{ entry[2] }}</p>
+                        {% endif %}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="tab-empty">No classification history recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div>
     <div class="buttons">
         {% if url.evaluated == 'yes' %}
         <form method="post">

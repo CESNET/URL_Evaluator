@@ -189,6 +189,36 @@
     }, 3000); // Show the element after 5 seconds
   });
 
+  // Live quick URL search: auto-submit the form (debounced) while typing,
+  // no Enter needed. Falls back to manual submit when JS is disabled.
+  document.addEventListener("DOMContentLoaded", function () {
+    const quickSearch = document.getElementById('quick-search');
+    if (!quickSearch || !quickSearch.form) {
+      return;
+    }
+    let debounceTimer = null;
+    quickSearch.addEventListener('input', function () {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        // Remember that we submitted via live-search so focus can be restored
+        // (with caret at the end) after the page reloads.
+        sessionStorage.setItem('quickSearchFocus', '1');
+        quickSearch.form.submit();
+      }, 400); // ms pause between keystrokes before searching
+    });
+
+    // After a live-search reload, put focus back into the search field and
+    // move the caret behind the last typed character.
+    if (sessionStorage.getItem('quickSearchFocus') === '1' && quickSearch.value) {
+      sessionStorage.removeItem('quickSearchFocus');
+      quickSearch.focus();
+      const len = quickSearch.value.length;
+      if (quickSearch.setSelectionRange) {
+        quickSearch.setSelectionRange(len, len);
+      }
+    }
+  });
+
 // ----------------------------------------------------------------
 
 function toggleHelp(element) {

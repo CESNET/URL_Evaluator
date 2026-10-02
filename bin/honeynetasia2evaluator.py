@@ -43,6 +43,10 @@ def honeynetasia2evaluator():
                     occurrences = urls.occurrences + 1;
             """, (url, current_date, current_date, get_domain(url))).rowcount
             db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "HoneyNet.Asia"))
+            db.execute(
+                "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+                (url, "HoneyNet.Asia", None, None, current_date)
+            )
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")
 

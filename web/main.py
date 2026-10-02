@@ -9,7 +9,7 @@ import logging
 import base64
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -17,7 +17,11 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, get_domain
+from common.utils import is_valid, get_domain, split_url_lines, add_urls_bulk
+try:
+    from common import content_store
+except Exception:
+    content_store = None
 
 # Global variables
 page = 1
@@ -27,9 +31,14 @@ filter_params = {}
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Receive messages from Warden, find suspicious URLs and save them to evaluator database.")
-parser.add_argument('--config', '-c', action='store', default="/etc/url_evaluator/config.yaml", help='Path to evaluator config file')
+parser.add_argument('--config', '-c', action='store', default=os.path.join(os.path.dirname(__file__), '../etc/config.yaml'), help='Path to evaluator config file')
 parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
-args = parser.parse_args()
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+else:
+    # When imported (e.g. by pytest), use defaults relative to workspace root
+    args = argparse.Namespace(config="etc/config.yaml", verbose=False)
 
 # Set logger
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
@@ -40,17 +49,60 @@ if args.verbose:
     logger.setLevel('DEBUG')
 
 # Load config
-config = Config(args.config)
+try:
+    config = Config(args.config)
+except FileNotFoundError:
+    # Fallback for tests/development if the config is missing at the specified path
+    import os
+    fallback_path = os.path.join(os.path.dirname(__file__), '../etc/config.yaml')
+    if os.path.exists(fallback_path):
+        config = Config(fallback_path)
+    else:
+        raise
 
-# Connect to MISP
+# Connect to MISP (optional - if the connection fails, MISP features are disabled)
+misp = None
 try:
     misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert)
 except Exception as e:
-    print(f"Error: Cannot connect to MISP: {e}")
+    logger.warning(f"Cannot connect to MISP, MISP features disabled: {e}")
 
 # Init flask
 application = app = Flask(__name__)
 app.secret_key = config.flask_secret_key
+
+
+@app.template_filter('human_bytes')
+def human_bytes(num):
+    """Render a byte count in a Figma-style human readable form (e.g. 44.3 KB)."""
+    try:
+        num = float(num)
+    except (TypeError, ValueError):
+        return ""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(num) < 1024.0:
+            if unit == "B":
+                return f"{int(num)} {unit}"
+            return f"{num:.1f} {unit}"
+        num /= 1024.0
+    return f"{num:.1f} PB"
+
+
+@app.template_filter('fmt_ts')
+def fmt_ts(value, with_time=True):
+    """
+    Normalise an ISO-ish timestamp to 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS UTC'.
+    Accepts both 'T' and space separators and strips the timezone designator for
+    display (all stored timestamps are UTC).
+    """
+    if not value:
+        return ""
+    s = str(value).replace("T", " ")
+    s = s.split("+")[0].split("Z")[0].strip()
+    # drop sub-second precision for display
+    if "." in s:
+        s = s.split(".")[0]
+    return (s + " UTC") if with_time else s.split(" ")[0]
 
 
 def get_urlhaus_link(url):
@@ -66,6 +118,8 @@ def get_urlhaus_link(url):
 
 
 def get_misp_link(url_detail):
+    if misp is None:
+        return None
     if url_detail.reported == "yes":
         try:
             events = misp.search(controler="events", value=url_detail.url, type_attribute='url')
@@ -75,6 +129,17 @@ def get_misp_link(url_detail):
         return f"{config.misp_url}/events/view/{event_id}"
     else:
         return None
+
+
+# Identity marker returned by get_user() when no authentication context is
+# present (neither OIDC claims nor HTTP REMOTE_USER). Used to gate all
+# edit/add actions and to anonymise human actors for public viewers.
+ANONYMOUS_USER = "--unknown--"
+
+# Actors that represent automated system scripts (not human analysts). These
+# must always be shown verbatim in the classification history, even to public
+# viewers; human actors are anonymised instead.
+SYSTEM_ACTORS = {"system", "evaluator", "evaluator-backprop", "session-ddos"}
 
 
 def get_user(environ):
@@ -87,8 +152,13 @@ def get_user(environ):
     elif "REMOTE_USER" in environ:
         user = environ['REMOTE_USER']
     else:
-        user = "--unknown--"
+        user = ANONYMOUS_USER
     return user
+
+
+def is_anonymous(user):
+    """Return True when the request has no authenticated identity."""
+    return user == ANONYMOUS_USER
 
 
 def get_ip(url):
@@ -121,15 +191,37 @@ def parse_filters():
             parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
         if param == "evaluated":
             parsed_filters += f" AND evaluated='{value}'"
+        # Filter on whether the URL has any stored (downloadable) content.
+        # "yes" -> at least one download_observations row references a content
+        # row; "no" -> no such row. Uses EXISTS/NOT EXISTS against
+        # download_observations joined to content so orphaned content_ids are
+        # not counted as available.
+        if param == "has_content":
+            exists_clause = (
+                "EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url AND d.content_id IS NOT NULL)"
+            )
+            if value == "yes":
+                parsed_filters += f" AND {exists_clause}"
+            elif value == "no":
+                parsed_filters += f" AND NOT {exists_clause}"
     parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
 
 
 def back_propagation(db, url):
-    src_urls = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-    if src_urls:
-        src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
+    rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+    if rows:
+        src_urls = ", ".join(f"'{row[0]}'" for row in rows)
         db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+        for row in rows:
+            db.record_classification(
+                row[0],
+                "malicious",
+                reason="Downloading from malicious URL",
+                actor="evaluator-backprop"
+            )
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -149,8 +241,16 @@ def list_all():
     if page_arg:
         page = int(page_arg)
 
-    # variables for adding new url
+    # variables for adding new urls (bulk add returns per-URL results)
     adding = ""
+    add_results = None
+
+    # quick URL search from the top search bar (GET keeps the query bookmarkable,
+    # POST form submits are redirected to the equivalent GET)
+    quick_search = flask.request.args.get('q')
+    if quick_search is not None:
+        page = 1
+        filter_params["url"] = quick_search.strip()
 
     # set filters
     if flask.request.method == 'POST':
@@ -175,21 +275,37 @@ def list_all():
 
             filter_src = flask.request.form['src'].strip()
             filter_params["src"] = filter_src
+
+            filter_has_content = flask.request.form.get('has_content', '').strip()
+            filter_params["has_content"] = filter_has_content
         except BadRequestKeyError:
             pass
 
-        # add new url
+        # add new url(s) – the popup textarea accepts one URL per line (commas and
+        # whitespace also work as separators); each entry is validated and stored
+        # individually, per-URL results are shown to the analyst.
         try:
-            if (add_url := flask.request.form['add-url'].strip()) and is_valid(add_url):
+            raw_urls = flask.request.form['add-url']
+            if is_anonymous(user):
+                # Public/unauthenticated users must not add URLs.
+                logger.warning(f"Blocked add-URL attempt by anonymous user: {raw_urls!r}")
+                adding = "fail"
+                raise BadRequestKeyError()
+            candidates = split_url_lines(raw_urls)
+            if candidates:
                 with SQLiteWrapper(config.db_path) as db:
-                    t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
-                    if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
-                        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
-                        adding = "success"
-                    else:
-                        adding = "in_db"
+                    add_results = add_urls_bulk(db, candidates, source="Manual", username=user)
+                if add_results["added"] and not add_results["invalid"] and not add_results["in_db"]:
+                    # every submitted URL was newly added
+                    adding = "success"
+                elif add_results["added"]:
+                    # some URLs added, others were duplicates or invalid
+                    adding = "partial"
+                elif add_results["in_db"]:
+                    # nothing new: every valid URL was already stored
+                    adding = "in_db"
+                else:
+                    adding = "fail"
             else:
                 adding = "fail"
         except BadRequestKeyError:
@@ -222,7 +338,7 @@ def list_all():
         record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, url_list=url_list, order=order, key=order_key, show=show, adding=adding, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
 
 
 class URLDetail:
@@ -256,18 +372,96 @@ def detail():
     user = get_user(flask.request.environ)
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
+    tab = flask.request.args.get('tab', 'overview')
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
+            # Re-evaluation is a mutation -> forbidden for anonymous users.
+            if is_anonymous(user):
+                logger.warning(f"Blocked re-evaluate attempt on {url} by anonymous user")
+                return make_response(jsonify({'error': 'Forbidden'}), 403)
             db.execute("UPDATE urls SET evaluated = 'no' WHERE url = ?", (url,))
             return redirect(url_for('detail', url=url))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        row = db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
+        if not row:
+            # To avoid crashing in a real environment, return a 404 page or a JSON error.
+            # In the context of the existing app, we return a render_template or redirect.
+            # Since we are adding a specific API check, we'll return a 404 response.
+            return make_response(jsonify({'error': 'URL not found in database'}), 404)
+        url_detail = URLDetail(row)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
+
+        # Sources tab: aggregate observations per honeynet (fall back to source label).
+        # One row per honeynet with first/last observation and total sightings.
+        try:
+            observations = db.execute("""
+                SELECT COALESCE(honeynet, source) AS source_name,
+                       MIN(observed_at)            AS first_observed,
+                       MAX(observed_at)            AS last_observed,
+                       COUNT(*)                    AS occurrences
+                FROM observations
+                WHERE url = ?
+                GROUP BY COALESCE(honeynet, source)
+                ORDER BY first_observed
+            """, (url,)).fetchall()
+        except Exception:
+            observations = []
+
+        # Classification history (newest first); fall back to empty list when the
+        # table does not exist yet (migration 002 not applied).
+        try:
+            class_history = db.execute("""
+                SELECT classification, reason, note, actor, created_at
+                FROM classification_history
+                WHERE url = ?
+                ORDER BY created_at DESC, id DESC
+            """, (url,)).fetchall()
+        except Exception:
+            class_history = []
+
+        # Privacy gate: public/unauthenticated viewers must not see the names
+        # of analysts who edited classifications manually. System-script actors
+        # (evaluator, session-ddos, ...) stay intact. We anonymise by replacing
+        # the actor of any non-system entry with a generic label.
+        if is_anonymous(user):
+            class_history = [
+                (c, r, n, (a if a in SYSTEM_ACTORS else "analyst"), t)
+                for (c, r, n, a, t) in class_history
+            ]
+
+        # The URL this one was derived from (extracted from), if any (internal detail link).
+        derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
+        derived_from_in_db = bool(derived_from and db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (derived_from,)).fetchone())
+
+        # Content tab: group identical consecutive downloads into versions
+        # (per Figma mockup). Fall back to an empty list when the new tables do
+        # not exist yet (migration 003 not applied).
+        try:
+            if content_store is not None:
+                content_versions = content_store.get_content_versions(db, url)
+            else:
+                content_versions = []
+        except Exception:
+            content_versions = []
+
+        # Current classification (for the per-version sandbox label) and the
+        # date range banner shown at the top of the Content tab.
+        current_classification = url_detail.classification
+        content_range_start = content_versions[0]["first_fetched"][:10] if content_versions else None
+        content_range_end = (url_detail.last_seen or "")[:10] if content_versions else None
+
+        # Badge counts for the tab bar (0 => the template hides the badge)
+        tab_counts = {
+            "content": len(content_versions),
+            "sources": len(observations),
+            "sandbox": 1 if url_detail.hash else 0,
+            "class_history": len(class_history),
+        }
 
     # count not active days
     inactive_for = 0
@@ -294,7 +488,17 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for)
+    return render_template(
+        'detail.html', user=user, is_anon=is_anonymous(user), url=url_detail, sessions=sessions, show=show,
+        links=links, inactive_for=inactive_for, tab=tab,
+        observations=observations, tab_counts=tab_counts,
+        class_history=class_history,
+        derived_from=derived_from, derived_from_in_db=derived_from_in_db,
+        content_versions=content_versions,
+        content_range_start=content_range_start,
+        content_range_end=content_range_end,
+        current_classification=current_classification
+    )
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
@@ -303,6 +507,11 @@ def edit_detail():
     url = flask.request.args.get('url')
     show = flask.request.args.get('show')
 
+    # Editing a classification is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning(f"Blocked edit_detail access by anonymous user (url={url})")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
+
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
             note = flask.request.form['note']
@@ -310,6 +519,8 @@ def edit_detail():
             reason = flask.request.form['reason']
             evaluated = "yes" if classification != "unclassified" else "no"
             db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            # Analyst decision -> record in the classification history
+            db.record_classification(url, classification, reason=reason, note=note, actor=user)
             if classification == "malicious":
                 back_propagation(db, url)
             return redirect(url_for("list_all", show=show))
@@ -324,6 +535,10 @@ def bulk_edit():
     user = get_user(flask.request.environ)
     action = flask.request.form.get("action")
     if action == "reevaluate":
+        # Re-evaluate (bulk) is a mutation -> forbidden for anonymous users.
+        if is_anonymous(user):
+            logger.warning("Blocked bulk re-evaluate attempt by anonymous user")
+            return make_response(jsonify({'error': 'Forbidden'}), 403)
         selected_urls = flask.request.form.getlist('selected_urls_list[]')
         if selected_urls:
             urls_string = "('" + "', '".join(selected_urls) + "')"
@@ -332,12 +547,16 @@ def bulk_edit():
         return redirect(url_for("list_all"))
 
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
-    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user)
+    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user, is_anon=is_anonymous(user))
 
 
 @app.route('/bulk_edit_action', methods=['POST'])
 def bulk_edit_action():
     user = get_user(flask.request.environ)
+    # Bulk classification edit is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning("Blocked bulk_edit_action attempt by anonymous user")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
     note = flask.request.form['note']
     classification = flask.request.form['class']
@@ -351,6 +570,16 @@ def bulk_edit_action():
             db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
         if classification_reason:
             db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+        # Analyst decision -> record in the classification history for each URL
+        if classification or note or classification_reason:
+            for url in selected_urls:
+                db.record_classification(
+                    url,
+                    classification or None,
+                    reason=classification_reason or None,
+                    note=note or None,
+                    actor=user
+                )
         if classification == "malicious":
             for url in selected_urls:
                 back_propagation(db, url)
@@ -387,3 +616,44 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+@app.route('/content/download/<int:content_id>')
+def download_content(content_id):
+    """
+    Serve a stored content sample.
+
+    The on-disk path is taken from the DB (never from user input) and resolved
+    against the configured content_dir, so the route cannot be abused to read
+    arbitrary files. Files are forced to download as attachments.
+    """
+    with SQLiteWrapper(config.db_path) as db:
+        row = db.execute(
+            "SELECT file_path, sha256, mime_type FROM content WHERE id = ?",
+            (content_id,)
+        ).fetchone()
+    if not row:
+        abort(404)
+    file_path, sha256, mime_type = row
+
+    # Resolve & confine to the configured content dir.
+    content_dir = getattr(config, "content_dir", None)
+    try:
+        base = os.path.realpath(content_dir) if content_dir else None
+        real = os.path.realpath(file_path)
+    except Exception:
+        abort(404)
+    if not real.startswith((base or "") + os.sep) or not os.path.isfile(real):
+        abort(404)
+
+    short = (sha256 or "sample")[:24]
+    return send_file(
+        real,
+        mimetype=mime_type or "application/octet-stream",
+        as_attachment=True,
+        download_name=f"{short}.bin",
+    )
+
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)
