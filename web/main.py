@@ -131,6 +131,17 @@ def get_misp_link(url_detail):
         return None
 
 
+# Identity marker returned by get_user() when no authentication context is
+# present (neither OIDC claims nor HTTP REMOTE_USER). Used to gate all
+# edit/add actions and to anonymise human actors for public viewers.
+ANONYMOUS_USER = "--unknown--"
+
+# Actors that represent automated system scripts (not human analysts). These
+# must always be shown verbatim in the classification history, even to public
+# viewers; human actors are anonymised instead.
+SYSTEM_ACTORS = {"system", "evaluator", "evaluator-backprop", "session-ddos"}
+
+
 def get_user(environ):
     # Get name of logged-in user
     if "OIDC_CLAIM_preferred_username" in environ:
@@ -141,8 +152,13 @@ def get_user(environ):
     elif "REMOTE_USER" in environ:
         user = environ['REMOTE_USER']
     else:
-        user = "--unknown--"
+        user = ANONYMOUS_USER
     return user
+
+
+def is_anonymous(user):
+    """Return True when the request has no authenticated identity."""
+    return user == ANONYMOUS_USER
 
 
 def get_ip(url):
@@ -270,6 +286,11 @@ def list_all():
         # individually, per-URL results are shown to the analyst.
         try:
             raw_urls = flask.request.form['add-url']
+            if is_anonymous(user):
+                # Public/unauthenticated users must not add URLs.
+                logger.warning(f"Blocked add-URL attempt by anonymous user: {raw_urls!r}")
+                adding = "fail"
+                raise BadRequestKeyError()
             candidates = split_url_lines(raw_urls)
             if candidates:
                 with SQLiteWrapper(config.db_path) as db:
@@ -317,7 +338,7 @@ def list_all():
         record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
 
 
 class URLDetail:
@@ -355,6 +376,10 @@ def detail():
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
+            # Re-evaluation is a mutation -> forbidden for anonymous users.
+            if is_anonymous(user):
+                logger.warning(f"Blocked re-evaluate attempt on {url} by anonymous user")
+                return make_response(jsonify({'error': 'Forbidden'}), 403)
             db.execute("UPDATE urls SET evaluated = 'no' WHERE url = ?", (url,))
             return redirect(url_for('detail', url=url))
 
@@ -398,6 +423,16 @@ def detail():
             """, (url,)).fetchall()
         except Exception:
             class_history = []
+
+        # Privacy gate: public/unauthenticated viewers must not see the names
+        # of analysts who edited classifications manually. System-script actors
+        # (evaluator, session-ddos, ...) stay intact. We anonymise by replacing
+        # the actor of any non-system entry with a generic label.
+        if is_anonymous(user):
+            class_history = [
+                (c, r, n, (a if a in SYSTEM_ACTORS else "analyst"), t)
+                for (c, r, n, a, t) in class_history
+            ]
 
         # The URL this one was derived from (extracted from), if any (internal detail link).
         derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
@@ -454,7 +489,7 @@ def detail():
     }
 
     return render_template(
-        'detail.html', user=user, url=url_detail, sessions=sessions, show=show,
+        'detail.html', user=user, is_anon=is_anonymous(user), url=url_detail, sessions=sessions, show=show,
         links=links, inactive_for=inactive_for, tab=tab,
         observations=observations, tab_counts=tab_counts,
         class_history=class_history,
@@ -471,6 +506,11 @@ def edit_detail():
     user = get_user(flask.request.environ)
     url = flask.request.args.get('url')
     show = flask.request.args.get('show')
+
+    # Editing a classification is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning(f"Blocked edit_detail access by anonymous user (url={url})")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
@@ -495,6 +535,10 @@ def bulk_edit():
     user = get_user(flask.request.environ)
     action = flask.request.form.get("action")
     if action == "reevaluate":
+        # Re-evaluate (bulk) is a mutation -> forbidden for anonymous users.
+        if is_anonymous(user):
+            logger.warning("Blocked bulk re-evaluate attempt by anonymous user")
+            return make_response(jsonify({'error': 'Forbidden'}), 403)
         selected_urls = flask.request.form.getlist('selected_urls_list[]')
         if selected_urls:
             urls_string = "('" + "', '".join(selected_urls) + "')"
@@ -503,12 +547,16 @@ def bulk_edit():
         return redirect(url_for("list_all"))
 
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
-    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user)
+    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user, is_anon=is_anonymous(user))
 
 
 @app.route('/bulk_edit_action', methods=['POST'])
 def bulk_edit_action():
     user = get_user(flask.request.environ)
+    # Bulk classification edit is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning("Blocked bulk_edit_action attempt by anonymous user")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
     note = flask.request.form['note']
     classification = flask.request.form['class']

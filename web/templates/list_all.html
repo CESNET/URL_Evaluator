@@ -114,6 +114,7 @@
     </form>
 
   </div>
+  {% if not is_anon %}
   <div id="add-url-wrap">
     <form action="{{ url_for('list_all', page=1) }}" method="post">
       <label class="filter-label" for="add-url">Suspicious URLs</label>
@@ -145,19 +146,25 @@
     </div>
     {% endif %}
   </div>
+  {% endif %}
 
   <div class="btn-line">
+    {% if not is_anon %}
     <div class="filter-btn">
       <button class="btn-style" onclick=showSelect()>Select</button>
     </div>
+    {% endif %}
     <div class="filter-btn">
       <button class="btn-style"
         onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
       <button class="btn-style" onclick=showFilter()>Filters</button>
+      {% if not is_anon %}
       <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
+      {% endif %}
     </div>
   </div>
 
+  {% if not is_anon %}
   <form class="select selected-urls" action="{{ url_for('bulk_edit') }}" method="post">
     <label>Selected URLs:</label>
     <div id="selected-urls-wrap" class="selected-urls-wrap" onload=loadList()>
@@ -168,6 +175,7 @@
       <button class="btn-style select" name="action" value="reevaluate" type="submit">Re-evaluate</button>
     </div>
   </form>
+  {% endif %}
 
   <div class="select select-all"> <input type="checkbox" onclick=selectAll(this) /> Select All</div>
   <table class="list" id="url-table">
@@ -258,8 +266,10 @@
             alt="note" title="{{ url[6] }}"> {% endif %} </td>
         <td class="reason">{{ url[5] }}</td>
         <td class="btn">
+          {% if not is_anon %}
           <a href="{{ url_for('edit_detail', url=url[0], show=show) }}"><button class="btn-style"
               onclick="">Edit</button></a>
+          {% endif %}
           <a href="{{ url_for('detail', url=url[0], show=show) }}"><button class="btn-style"
               onclick="">Details</button></a>
         </td>

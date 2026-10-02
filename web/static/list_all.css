@@ -248,6 +248,9 @@ form.selected-urls button {
   display: flex;
   justify-content: right;
   align-items: center;
+  /* Push the group to the far right even when it is the only .btn-line child
+     (e.g. the left "Select" group is hidden to anonymous users). */
+  margin-left: auto;
 }
 
 .filter-btn button {
