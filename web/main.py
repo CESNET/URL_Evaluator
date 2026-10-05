@@ -7,6 +7,7 @@ import sys
 import argparse
 import logging
 import base64
+import json
 
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file
@@ -22,6 +23,10 @@ try:
     from common import content_store
 except Exception:
     content_store = None
+try:
+    from common import hybrid_analysis
+except Exception:
+    hybrid_analysis = None
 
 # Global variables
 page = 1
@@ -449,6 +454,27 @@ def detail():
         except Exception:
             content_versions = []
 
+        # Sandbox tab: Hybrid Analysis lookup stored per distinct content
+        # (newest version first). The lookup itself runs in evaluator /
+        # activity_scanner when the content is downloaded.
+        sandbox_entries = []
+        seen_content = set()
+        for v in reversed(content_versions):
+            cid = v.get("content_id")
+            if cid is None or cid in seen_content:
+                continue
+            seen_content.add(cid)
+            row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (cid,)).fetchone()
+            ha = hybrid_analysis.get_lookup(row[0]) if (row and hybrid_analysis is not None) else None
+            sandbox_entries.append({
+                "version": v["version"],
+                "content_id": cid,
+                "sha256": v.get("sha256"),
+                "ha": ha,
+                "ha_response_pretty": json.dumps(ha.get("response"), indent=2) if ha else None,
+            })
+        ha_lookup_by_content = {e["content_id"]: e["ha"] for e in sandbox_entries}
+
         # Current classification (for the per-version sandbox label) and the
         # date range banner shown at the top of the Content tab.
         current_classification = url_detail.classification
@@ -459,7 +485,7 @@ def detail():
         tab_counts = {
             "content": len(content_versions),
             "sources": len(observations),
-            "sandbox": 1 if url_detail.hash else 0,
+            "sandbox": sum(1 for e in sandbox_entries if e["ha"] and e["ha"].get("tested")),
             "class_history": len(class_history),
         }
 
@@ -497,7 +523,9 @@ def detail():
         content_versions=content_versions,
         content_range_start=content_range_start,
         content_range_end=content_range_end,
-        current_classification=current_classification
+        current_classification=current_classification,
+        sandbox_entries=sandbox_entries,
+        ha_lookup_by_content=ha_lookup_by_content
     )
 
 

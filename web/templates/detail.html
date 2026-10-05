@@ -320,12 +320,19 @@
                         <tr>
                             <td>Sandbox</td>
                             <td>
-                                TBD
-                                <!--
-                                <span class="classification {{ current_classification }} classification-inline">{{ current_classification }}</span>
+                                {% set ha = ha_lookup_by_content.get(v.content_id) if v.content_id else none %}
+                                {% if ha and ha.tested %}
+                                <span class="ha-verdict {{ (((ha.overview.verdict if ha.overview else '')) or 'unknown')|replace(' ', '-') }}">{{ (ha.overview.verdict if ha.overview else '') or 'analysed' }}</span>
                                 <span class="sandbox-sep">&middot;</span>
-                                <span class="sandbox-name">PSNC Sandbox</span>
-                                <a class="sandbox-report" href="{{ links['joe-sandbox'] }}" target="_blank">report &rarr;</a>-->
+                                <span class="sandbox-name">Hybrid Analysis</span>
+                                <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">details &rarr;</a>
+                                {% elif ha and not ha.error %}
+                                <span class="sandbox-name">Not analysed on Hybrid Analysis</span>
+                                {% elif ha %}
+                                <span class="sandbox-name">Hybrid Analysis lookup failed ({{ ha.error or ('HTTP ' ~ ha.http_status) }})</span>
+                                {% else %}
+                                <span class="derived-none">not checked</span>
+                                {% endif %}
                             </td>
                         </tr>
                         {% if v.content_id %}
@@ -358,9 +365,163 @@
         </div>
         {% endif %}
 
-        {# ============ TAB: SANDBOX (placeholder) ============ #}
+        {# ============ TAB: SANDBOX (Hybrid Analysis hash lookup per content version) ============ #}
         {% if tab == 'sandbox' %}
-        <div class="content"><p class="tab-empty">Sandbox analysis coming soon.</p></div>
+        <div class="content content-tab">
+            {% if sandbox_entries %}
+            <div class="content-meta">
+                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted.</p>
+            </div>
+
+            {% for e in sandbox_entries %}
+            {% set ha = e.ha %}
+            <section class="version-card">
+                <header class="version-card-head">
+                    <div class="version-card-title">
+                        <h3>Version {{ e.version }}</h3>
+                        {% if ha and ha.tested %}
+                        <span class="ha-badge tested">already analysed</span>
+                        {% elif ha and not ha.error %}
+                        <span class="ha-badge not-tested">not analysed yet</span>
+                        {% elif ha %}
+                        <span class="ha-badge error">lookup failed</span>
+                        {% else %}
+                        <span class="ha-badge unknown">not checked</span>
+                        {% endif %}
+                    </div>
+                    {% if ha and ha.http_status %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}
+                </header>
+
+                <table class="version-card-body">
+                    <tbody>
+                        <tr>
+                            <td>SHA-256</td>
+                            <td class="mono">{{ e.sha256 }}</td>
+                        </tr>
+                        {% if not ha %}
+                        <tr>
+                            <td>Hybrid Analysis</td>
+                            <td>This content has not been looked up yet (lookup disabled or not run since the content was downloaded).</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td>Checked</td>
+                            <td>{{ ha.checked_at|fmt_ts }}</td>
+                        </tr>
+                        {% if ha.error %}
+                        <tr>
+                            <td>Error</td>
+                            <td class="ha-error">{{ ha.error }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ha.last_error %}
+                        <tr>
+                            <td>Last attempt</td>
+                            <td class="ha-error">{{ ha.last_error.checked_at|fmt_ts }} &ndash; {{ ha.last_error.error or ('HTTP ' ~ ha.last_error.http_status) }} (showing the previous successful result)</td>
+                        </tr>
+                        {% endif %}
+                        {% if not ha.error and not ha.tested %}
+                        <tr>
+                            <td>Result</td>
+                            <td>No detonation report exists on Hybrid Analysis for this hash.</td>
+                        </tr>
+                        {% endif %}
+                        {% if ha.tested %}
+                        {% set ov = ha.overview or {} %}
+                        <tr>
+                            <td>Verdict</td>
+                            <td>
+                                <span class="ha-verdict {{ ((ov.verdict) or 'unknown')|replace(' ', '-') }}">{{ ov.verdict or 'n/a' }}</span>
+                                {% if ov.threat_score is defined and ov.threat_score is not none %}
+                                <span class="sandbox-sep">&middot;</span>threat score <strong>{{ ov.threat_score }}</strong>/100
+                                {% endif %}
+                                {% if ha.sample_url %}
+                                <a class="sandbox-report" href="{{ ha.sample_url }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if ov.vx_family %}
+                        <tr>
+                            <td>Malware family</td>
+                            <td>{{ ov.vx_family }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.multiscan_result is defined and ov.multiscan_result is not none %}
+                        <tr>
+                            <td>AV multiscan</td>
+                            <td>{{ ov.multiscan_result }}% detection</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.type or ov.last_file_name %}
+                        <tr>
+                            <td>File</td>
+                            <td>{{ ov.last_file_name or '' }}{% if ov.type %} <span class="derived-none">({{ ov.type }})</span>{% endif %}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.tags %}
+                        <tr>
+                            <td>Tags</td>
+                            <td>{% for t in ov.tags %}<span class="honeynet-chip">{{ t }}</span> {% endfor %}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.analysis_start_time or ov.submitted_at %}
+                        <tr>
+                            <td>Analysed</td>
+                            <td>{{ (ov.analysis_start_time or ov.submitted_at)|fmt_ts }}</td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td>Reports</td>
+                            <td>
+                                <table class="sources-table ha-reports">
+                                    <thead>
+                                        <tr><th>Environment</th><th>State</th><th>Verdict</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for r in ha.reports %}
+                                        <tr>
+                                            <td>{{ r.environment_description or r.environment_id or '—' }}</td>
+                                            <td>{{ r.state or '—' }}{% if r.error_type %} <span class="ha-error">({{ r.error_type }})</span>{% endif %}</td>
+                                            <td><span class="ha-verdict {{ ((r.verdict) or 'unknown')|replace(' ', '-') }}">{{ r.verdict or '—' }}</span></td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if ha.api_limits %}
+                        <tr>
+                            <td>API limits</td>
+                            <td class="headers mono">
+                                {% if ha.api_limits is mapping %}
+                                    {% for k, val in ha.api_limits.items() %}
+                                    <div><span class="header-key">{{ k }}:</span> {{ val|tojson }}</div>
+                                    {% endfor %}
+                                {% else %}{{ ha.api_limits }}{% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if e.ha_response_pretty %}
+                        <tr>
+                            <td>Raw response</td>
+                            <td>
+                                <details class="ha-raw">
+                                    <summary>GET /search/hash &mdash; HTTP {{ ha.http_status }}</summary>
+                                    <pre class="mono">{{ e.ha_response_pretty }}</pre>
+                                </details>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endif %}
+                    </tbody>
+                </table>
+            </section>
+            {% endfor %}
+            {% else %}
+            <p class="tab-empty">No downloaded content recorded for this URL, nothing to look up in a sandbox.</p>
+            {% endif %}
+        </div>
         {% endif %}
 
         {# ============ TAB: CLASSIFICATION HISTORY (timeline per Figma) ============ #}

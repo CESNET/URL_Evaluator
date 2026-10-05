@@ -19,6 +19,10 @@ try:
     from common import content_store
 except Exception:
     content_store = None
+try:
+    from common import hybrid_analysis
+except Exception:
+    hybrid_analysis = None
 
 
 def _record_daily_fetch(db, url, response, body, fetched_at):
@@ -62,6 +66,9 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
                     )
                 else:
                     content_id = info.get("id")
+                    # Has this payload already been analysed on Hybrid Analysis?
+                    if hybrid_analysis is not None:
+                        hybrid_analysis.check_content(db, config, content_id, info.get("sha256"))
     try:
         content_store.record_download_observation(
             db,

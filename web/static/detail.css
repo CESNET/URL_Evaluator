@@ -610,3 +610,72 @@
 .detail .header-key {
     color: #818181;
 }
+/* ---------- Sandbox tab (Hybrid Analysis hash lookup) ---------- */
+.detail .ha-badge {
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    border: 1px solid;
+    text-transform: lowercase;
+}
+
+.detail .ha-badge.tested     { color: #b42318; background-color: #fef3f2; border-color: #fecdca; }
+.detail .ha-badge.not-tested { color: #067647; background-color: #ecfdf3; border-color: #abefc6; }
+.detail .ha-badge.error      { color: #b54708; background-color: #fffaeb; border-color: #fedf89; }
+.detail .ha-badge.unknown    { color: #6b7280; background-color: #f9fafb; border-color: #e5e7eb; }
+
+.detail .ha-verdict {
+    font-weight: 700;
+    text-transform: lowercase;
+    color: #6b7280;
+}
+
+.detail .ha-verdict.malicious        { color: #d92d20; }
+.detail .ha-verdict.suspicious       { color: #f79009; }
+.detail .ha-verdict.no-specific-threat,
+.detail .ha-verdict.whitelisted,
+.detail .ha-verdict.no-verdict       { color: #29c000; }
+
+.detail .ha-error {
+    color: #b54708;
+}
+
+/* nested reports table: undo the "label: value" column styling of the card */
+.detail .version-card-body .ha-reports {
+    margin: 0;
+    width: auto;
+}
+
+.detail .version-card-body .ha-reports td,
+.detail .version-card-body .ha-reports td:first-child,
+.detail .version-card-body .ha-reports td:nth-child(2) {
+    width: auto;
+    color: inherit;
+    padding: 4px 16px 4px 0;
+}
+
+.detail .version-card-body .ha-reports td:first-child::after {
+    content: none;
+}
+
+.detail .version-card-body .ha-reports th {
+    padding: 4px 16px 4px 0;
+}
+
+.detail .ha-raw summary {
+    cursor: pointer;
+    color: #17a2c6;
+    font-weight: 600;
+}
+
+.detail .ha-raw pre {
+    max-height: 420px;
+    overflow: auto;
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    background-color: #f7f7f7;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    white-space: pre;
+}

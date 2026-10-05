@@ -23,6 +23,10 @@ try:
     from common import content_store
 except Exception:
     content_store = None
+try:
+    from common import hybrid_analysis
+except Exception:
+    hybrid_analysis = None
 
 
 def vt_stats_analysis(stats):
@@ -129,6 +133,19 @@ def _record_fetch(url, response, content_id=None, fetched_at=None):
         logger.debug(f"Could not record download observation for {url}: {e}")
 
 
+def _check_hybrid_analysis(db_conn, content_id, sha256):
+    """
+    Look up the stored payload's SHA-256 on Hybrid Analysis (was it already
+    detonated there?) and save the answer into content.sandbox_info.
+    Best-effort: never breaks the evaluation.
+    """
+    if hybrid_analysis is None:
+        return
+    result = hybrid_analysis.check_content(db_conn, config, content_id, sha256)
+    if result and result.get("tested"):
+        logger.debug(f"Content {sha256} is known to Hybrid Analysis ({len(result.get('reports') or [])} report(s))")
+
+
 def _store_downloaded_content(url, body, mime_type, fetched_at):
     """
     Deduplicate & persist a downloaded payload to disk and link it to an
@@ -152,6 +169,7 @@ def _store_downloaded_content(url, body, mime_type, fetched_at):
                 f"disk – skipping content record, observation will reference no payload"
             )
             return None
+        _check_hybrid_analysis(db_conn, info.get("id"), info.get("sha256"))
         return info.get("id")
     except Exception as e:
         logger.warning(f"Could not store content for {url}: {e}")
