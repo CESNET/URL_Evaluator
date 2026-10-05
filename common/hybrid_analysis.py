@@ -1,40 +1,12 @@
 #Author: Lukáš Šimoník, xsimonl00@stud.fit.vutbr.cz
 
 """
-Hybrid Analysis (Falcon Sandbox) hash lookups for stored content.
+Read-only Hybrid Analysis (Falcon Sandbox) hash lookups for stored content.
 
-Whenever a payload is downloaded and stored (see ``content_store``), its
-SHA-256 is looked up on Hybrid Analysis to find out whether the sample has
-already been detonated there. Nothing is ever submitted -- this is a read-only
-lookup that does not consume the submission quota.
-
-API reference: docs/hybrid-analysis-api-v2.json (OpenAPI 3.0, downloaded from
-https://hybrid-analysis.com/bff/api-docs/v2). Endpoints used:
-
-  * ``GET /search/hash?hash=<sha256>`` -- list of detonation reports
-    (``SearchByHash``: ``sha256s`` + ``reports``)
-  * ``GET /overview/{sha256}``         -- aggregated verdict / threat score
-    (``Overview``), only requested when the hash is known
-
+For each payload stored by ``content_store``, its SHA-256 is looked up to see
+whether the sample has already been detonated. Nothing is ever submitted.
 The result is stored as JSON in ``content.sandbox_info`` under the
-``"hybrid_analysis"`` key (other sandboxes may add their own keys), e.g.::
-
-    {
-      "hybrid_analysis": {
-        "checked_at": "2026-10-05T12:05:11+00:00",
-        "sha256": "ffee…",
-        "http_status": 200,
-        "tested": true,
-        "error": null,
-        "api_limits": {...},
-        "reports": [{"id": "…", "environment_description": "…",
-                     "state": "SUCCESS", "verdict": "malicious", …}],
-        "overview": {"verdict": "malicious", "threat_score": 100,
-                     "vx_family": "Mirai", "tags": [...], …},
-        "sample_url": "https://hybrid-analysis.com/sample/ffee…",
-        "response": {...}   # raw JSON body of /search/hash
-      }
-    }
+``"hybrid_analysis"`` key.
 """
 
 import json
