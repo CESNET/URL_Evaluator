@@ -6,7 +6,9 @@ import threading
 import sys
 import os
 import signal
+import time
 import requests
+from collections import Counter
 from datetime import datetime, timezone
 from apscheduler.schedulers.background import BlockingScheduler
 
@@ -23,6 +25,15 @@ try:
     from common import hybrid_analysis
 except Exception:
     hybrid_analysis = None
+
+# Per-run counters shared by the worker threads (reset by activity_scanner()).
+run_stats = Counter()
+run_stats_lock = threading.Lock()
+
+
+def _count(key, n=1):
+    with run_stats_lock:
+        run_stats[key] += n
 
 
 def _record_daily_fetch(db, url, response, body, fetched_at):
@@ -66,9 +77,14 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
                     )
                 else:
                     content_id = info.get("id")
+                    _count("content_stored")
                     # Has this payload already been analysed on Hybrid Analysis?
                     if hybrid_analysis is not None:
-                        hybrid_analysis.check_content(db, config, content_id, info.get("sha256"))
+                        result, outcome = hybrid_analysis.check_content_outcome(
+                            db, config, content_id, info.get("sha256"))
+                        _count(f"ha_{outcome}")
+                        if result and result.get("tested") and outcome in ("checked", "cached"):
+                            _count("ha_tested")
     try:
         content_store.record_download_observation(
             db,
@@ -118,13 +134,21 @@ def thread_func(thread_id, urls):
             logger.debug(f'Thread {thread_id}: Updating DB record for {url}')
             last_active = datetime.now(timezone.utc).date() if new_status == 'active' else last_active
             db.execute("UPDATE urls SET status = ?, last_active = ? WHERE url = ?", (new_status, last_active, url))
+            _count("urls_updated")
+            _count(f"urls_{new_status}")
             if new_status != current_status:
                 db.execute("UPDATE urls SET status_changed = 'yes' WHERE url = ?", (url,))
+                _count("urls_status_changed")
     logger.info(f'Thread {thread_id}: Finished')
 
 
 def activity_scanner():
     logger.info("Job started")
+    started = time.monotonic()
+    with run_stats_lock:
+        run_stats.clear()
+    if hybrid_analysis is not None:
+        hybrid_analysis.reset_request_stats()
 
     with SQLiteWrapper(config.db_path) as db:
         urls = db.execute("SELECT url, status, last_active FROM urls").fetchall()
@@ -133,12 +157,50 @@ def activity_scanner():
     # Chunking: spawn one worker thread per chunk of max 1000 URLs, so URLs are re-polled in parallel.
     url_limit = 1000
     thread_id = 1
+    threads = []
     for start_idx in range(0, len(urls), url_limit):
         chunk = urls[start_idx:start_idx + url_limit]
         logger.debug(f'Thread {thread_id}: first = {start_idx}, last = {len(chunk)}')
         thread = threading.Thread(target=thread_func, args=(thread_id, chunk))
         thread_id += 1
         thread.start()
+        threads.append(thread)
+
+    # Wait for every worker, then report the whole run.
+    for thread in threads:
+        thread.join()
+    _log_run_summary(len(urls), time.monotonic() - started)
+
+
+def _log_run_summary(urls_loaded, elapsed):
+    """Log what the finished run updated and how hard it used the Hybrid Analysis API."""
+    with run_stats_lock:
+        st = dict(run_stats)
+    minutes = max(elapsed / 60, 1 / 60)
+    logger.info(
+        f"Job finished in {elapsed / 60:.1f} min: {st.get('urls_updated', 0)}/{urls_loaded} URLs updated "
+        f"(active {st.get('urls_active', 0)}, inactive {st.get('urls_inactive', 0)}, "
+        f"status changed {st.get('urls_status_changed', 0)}), content stored for {st.get('content_stored', 0)} URLs"
+    )
+    if hybrid_analysis is None:
+        return
+    ha = hybrid_analysis.request_stats()
+    logger.info(
+        f"Hybrid Analysis: {st.get('ha_checked', 0) + st.get('ha_cached', 0)} URLs with hash successfully checked "
+        f"({st.get('ha_checked', 0)} queried now, {st.get('ha_cached', 0)} from recent stored result), "
+        f"{st.get('ha_tested', 0)} already analysed by HA, {st.get('ha_failed', 0)} failed, "
+        f"{st.get('ha_skipped', 0)} skipped (disabled / paused after 429)"
+    )
+    logger.info(
+        f"Hybrid Analysis API usage: {ha['requests']} GET requests, avg {ha['requests'] / minutes:.1f}/min, "
+        f"peak {ha['peak_per_minute']} in any 60 s window (quota 200/min), "
+        f"HTTP statuses {ha['by_status']}, last Api-Limits {ha['api_limits']}"
+    )
+    rate_limited = ha["by_status"].get(429, 0)
+    if rate_limited:
+        logger.warning(f"Hybrid Analysis: HTTP 429 (rate limit) received {rate_limited}x during this run")
+    elif ha["peak_per_minute"] >= 200:
+        logger.warning("Hybrid Analysis: peak request rate reached the 200/min quota")
 
 
 def sigint_handler(signum, frame):

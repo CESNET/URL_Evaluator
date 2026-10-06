@@ -11,6 +11,7 @@ import magic
 import requests
 import logging
 import virustotal_python
+from collections import Counter
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
 
@@ -133,7 +134,7 @@ def _record_fetch(url, response, content_id=None, fetched_at=None):
         logger.debug(f"Could not record download observation for {url}: {e}")
 
 
-def _check_hybrid_analysis(db_conn, content_id, sha256):
+def _check_hybrid_analysis(db_conn, content_id, sha256, url=None):
     """
     Look up the stored payload's SHA-256 on Hybrid Analysis (was it already
     detonated there?) and save the answer into content.sandbox_info.
@@ -141,9 +142,70 @@ def _check_hybrid_analysis(db_conn, content_id, sha256):
     """
     if hybrid_analysis is None:
         return
-    result = hybrid_analysis.check_content(db_conn, config, content_id, sha256)
-    if result and result.get("tested"):
-        logger.debug(f"Content {sha256} is known to Hybrid Analysis ({len(result.get('reports') or [])} report(s))")
+    result, outcome = hybrid_analysis.check_content_outcome(db_conn, config, content_id, sha256)
+    ha_url_stats[outcome] += 1
+    tested = bool(result and result.get("tested") and outcome in ("checked", "cached"))
+    if tested:
+        ha_url_stats["tested"] += 1
+
+    if outcome in ("checked", "cached"):
+        logger.info(
+            f"Hybrid Analysis: content {sha256[:12]}… of {url} "
+            f"{'already analysed (' + str(len(result.get('reports') or [])) + ' report(s))' if tested else 'not analysed yet'}"
+            f"{' [stored result]' if outcome == 'cached' else ''}"
+        )
+        return
+
+    # Rate limit: either this request got HTTP 429 or lookups are still paused after one.
+    last_status = (result or {}).get("last_error", {}).get("http_status") or (result or {}).get("http_status")
+    resume = hybrid_analysis.paused_until()
+    if outcome == "failed" and last_status == 429:
+        ha_url_stats["rate_limited"] += 1
+        logger.warning(
+            f"Hybrid Analysis rate limit hit (HTTP 429) while checking content of {url}; "
+            f"lookups paused until {resume.isoformat(timespec='seconds') if resume else 'n/a'}"
+        )
+    elif outcome == "skipped" and resume:
+        ha_url_stats["rate_limited"] += 1
+        logger.warning(
+            f"Hybrid Analysis lookup for {url} skipped: rate limit pause after HTTP 429 "
+            f"until {resume.isoformat(timespec='seconds')}"
+        )
+    elif outcome == "failed":
+        logger.warning(f"Hybrid Analysis lookup for content of {url} failed (HTTP {last_status})")
+
+
+def _log_ha_usage(force=False):
+    """
+    Periodically (every `ha_stats_interval_minutes`, default 10) log how many
+    URLs had their content hash checked on Hybrid Analysis and the API request
+    rate, then start a new window. `force` logs immediately (on shutdown).
+    """
+    global ha_stats_started
+    if hybrid_analysis is None:
+        return
+    elapsed = time.monotonic() - ha_stats_started
+    if not force and elapsed < 60 * getattr(config, "ha_stats_interval_minutes", 10):
+        return
+    ha = hybrid_analysis.request_stats()
+    if ha["requests"] or any(ha_url_stats.values()):
+        minutes = max(elapsed / 60, 1 / 60)
+        logger.info(
+            f"Hybrid Analysis (last {elapsed / 60:.1f} min): "
+            f"{ha_url_stats['checked'] + ha_url_stats['cached']} URLs with hash successfully checked "
+            f"({ha_url_stats['checked']} queried now, {ha_url_stats['cached']} from stored result), "
+            f"{ha_url_stats['tested']} already analysed by HA, {ha_url_stats['failed']} failed, "
+            f"{ha_url_stats['skipped']} skipped; API: {ha['requests']} GET requests, "
+            f"avg {ha['requests'] / minutes:.1f}/min, peak {ha['peak_per_minute']} in any 60 s window "
+            f"(quota 200/min), HTTP statuses {ha['by_status']}, last Api-Limits {ha['api_limits']}"
+        )
+        if ha["by_status"].get(429):
+            logger.warning(f"Hybrid Analysis: HTTP 429 (rate limit) received {ha['by_status'][429]}x in the last {elapsed / 60:.1f} min")
+        elif ha["peak_per_minute"] >= 200:
+            logger.warning("Hybrid Analysis: peak request rate reached the 200/min quota")
+    hybrid_analysis.reset_request_stats()
+    ha_url_stats.clear()
+    ha_stats_started = time.monotonic()
 
 
 def _store_downloaded_content(url, body, mime_type, fetched_at):
@@ -169,7 +231,7 @@ def _store_downloaded_content(url, body, mime_type, fetched_at):
                 f"disk – skipping content record, observation will reference no payload"
             )
             return None
-        _check_hybrid_analysis(db_conn, info.get("id"), info.get("sha256"))
+        _check_hybrid_analysis(db_conn, info.get("id"), info.get("sha256"), url)
         return info.get("id")
     except Exception as e:
         logger.warning(f"Could not store content for {url}: {e}")
@@ -482,12 +544,19 @@ if __name__ == "__main__":
     blacklist = []
     bl_last_updated = None
 
+    # Hybrid Analysis usage statistics (logged periodically by _log_ha_usage)
+    ha_url_stats = Counter()
+    ha_stats_started = time.monotonic()
+    if hybrid_analysis is not None:
+        hybrid_analysis.reset_request_stats()
+
     # Open DB connection
     db = SQLiteWrapper(config.db_path)
 
     logger.info("Started")
     running_flag = True
     while running_flag:
+        _log_ha_usage()
         url = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
         if not url:
             logger.debug("No URLs to check, sleeping for 10 seconds")
@@ -534,5 +603,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
 
+    _log_ha_usage(force=True)
     db.close()
     logger.info("Stopped")

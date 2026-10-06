@@ -102,6 +102,7 @@ mb_key: "!!! CHANGE THIS !!!"
 ha_url: "https://hybrid-analysis.com/api/v2"
 ha_key: "!!! CHANGE THIS !!!"
 ha_recheck_hours: 12 # minimal age of a stored result before the hash is queried again
+ha_stats_interval_minutes: 10 # evaluator logs Hybrid Analysis usage (requests/min, 429s) this often
 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"

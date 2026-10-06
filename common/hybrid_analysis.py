@@ -10,8 +10,10 @@ The result is stored as JSON in ``content.sandbox_info`` under the
 """
 
 import json
+import time
 import logging
 import threading
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -39,6 +41,66 @@ _OVERVIEW_FIELDS = (
 # runs lookups from several worker threads).
 _lock = threading.Lock()
 _blocked_until = None
+
+# Every HTTP request sent to the API (monotonic timestamps + status), so a
+# caller can verify the per-minute quota is not exceeded (see request_stats).
+_stats_lock = threading.Lock()
+_request_times = []
+_request_statuses = Counter()
+_last_api_limits = None
+
+
+def reset_request_stats():
+    """Forget all recorded API requests (call at the start of a run)."""
+    global _last_api_limits
+    with _stats_lock:
+        _request_times.clear()
+        _request_statuses.clear()
+        _last_api_limits = None
+
+
+def request_stats():
+    """
+    Summary of the API requests recorded since reset_request_stats():
+    total count, count per HTTP status (or exception name), the highest number
+    of requests in any 60 s window and the last Api-Limits header received.
+    """
+    with _stats_lock:
+        times = sorted(_request_times)
+        statuses = dict(_request_statuses)
+        api_limits = _last_api_limits
+    peak, start = 0, 0
+    for end, t in enumerate(times):
+        while t - times[start] >= 60:
+            start += 1
+        peak = max(peak, end - start + 1)
+    return {"requests": len(times), "by_status": statuses,
+            "peak_per_minute": peak, "api_limits": api_limits}
+
+
+def _get(url, **kwargs):
+    """requests.get() that records the request for request_stats() and logs
+    every unexpected status (429 included) clearly."""
+    global _last_api_limits
+    try:
+        r = requests.get(url, **kwargs)
+    except requests.exceptions.RequestException as e:
+        with _stats_lock:
+            _request_times.append(time.monotonic())
+            _request_statuses[type(e).__name__] += 1
+        raise
+    limits = _parse_api_limits(r)
+    with _stats_lock:
+        _request_times.append(time.monotonic())
+        _request_statuses[r.status_code] += 1
+        if limits is not None:
+            _last_api_limits = limits
+    if r.status_code not in _ANSWER_STATUSES:
+        logger.warning(
+            f"Hybrid Analysis API returned HTTP {r.status_code} for {url.split('/api/v2', 1)[-1]}"
+            f" (Retry-After: {r.headers.get('Retry-After')}, Api-Limits: {limits})"
+        )
+    return r
 
 
 def _api_settings(config):
@@ -84,6 +146,14 @@ def _rate_limited():
         return _blocked_until is not None and datetime.now(timezone.utc) < _blocked_until
 
 
+def paused_until():
+    """Return when lookups resume after an HTTP 429 (UTC datetime), or None when not paused."""
+    with _lock:
+        if _blocked_until is not None and datetime.now(timezone.utc) < _blocked_until:
+            return _blocked_until
+        return None
+
+
 def _block(response):
     """Pause all lookups after HTTP 429 (honours Retry-After when present)."""
     global _blocked_until
@@ -122,8 +192,8 @@ def lookup_sha256(config, sha256):
         "response": None,
     }
     try:
-        r = requests.get(f"{api_url}/search/hash", params={"hash": sha256},
-                         headers=_headers(api_key), timeout=30)
+        r = _get(f"{api_url}/search/hash", params={"hash": sha256},
+                 headers=_headers(api_key), timeout=30)
     except requests.exceptions.RequestException as e:
         logger.warning(f"Hybrid Analysis lookup of {sha256} failed: {e}")
         result["error"] = f"Request failed: {type(e).__name__}"
@@ -157,7 +227,7 @@ def lookup_sha256(config, sha256):
 
     # Aggregated verdict / threat score (best effort, not fatal).
     try:
-        o = requests.get(f"{api_url}/overview/{sha256}", headers=_headers(api_key), timeout=30)
+        o = _get(f"{api_url}/overview/{sha256}", headers=_headers(api_key), timeout=30)
         if o.status_code == 429:
             _block(o)
         elif o.ok and isinstance(ov := _json_or_text(o), dict):
@@ -194,8 +264,19 @@ def check_content(db, config, content_id, sha256, force=False):
 
     Returns the (new or cached) result dict, or None. Never raises.
     """
+    return check_content_outcome(db, config, content_id, sha256, force)[0]
+
+
+def check_content_outcome(db, config, content_id, sha256, force=False):
+    """
+    Same as check_content(), but returns ``(result, outcome)`` where outcome is
+      * 'checked' -- the API answered now (200 / 404) and the result was stored
+      * 'cached'  -- a recent stored answer was reused, no request was sent
+      * 'failed'  -- the API request failed (e.g. HTTP 429, 5xx, timeout)
+      * 'skipped' -- lookup disabled, paused after a 429, or no content
+    """
     if content_id is None or not sha256 or not is_enabled(config):
-        return None
+        return None, "skipped"
     try:
         row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (content_id,)).fetchone()
         info = _load_sandbox_info(row[0] if row else None)
@@ -205,15 +286,16 @@ def check_content(db, config, content_id, sha256, force=False):
             try:
                 age = datetime.now(timezone.utc) - datetime.fromisoformat(previous["checked_at"])
                 if age < timedelta(hours=getattr(config, "ha_recheck_hours", DEFAULT_RECHECK_HOURS)):
-                    return previous
+                    return previous, "cached"
             except (KeyError, TypeError, ValueError):
                 pass
 
         result = lookup_sha256(config, sha256)
         if result is None:
-            return previous
+            return previous, "skipped"
+        outcome = "checked" if result["http_status"] in _ANSWER_STATUSES else "failed"
         # Keep a previous successful answer when this attempt failed.
-        if (result["http_status"] not in _ANSWER_STATUSES and previous
+        if (outcome == "failed" and previous
                 and previous.get("http_status") in _ANSWER_STATUSES):
             previous["last_error"] = {"checked_at": result["checked_at"],
                                       "http_status": result["http_status"],
@@ -221,7 +303,7 @@ def check_content(db, config, content_id, sha256, force=False):
             result = previous
         info["hybrid_analysis"] = result
         db.execute("UPDATE content SET sandbox_info = ? WHERE id = ?", (json.dumps(info), content_id))
-        return result
+        return result, outcome
     except Exception as e:
         logger.warning(f"Could not store Hybrid Analysis result for content {content_id}: {e}")
-        return None
+        return None, "failed"
