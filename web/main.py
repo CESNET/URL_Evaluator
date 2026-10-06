@@ -36,14 +36,16 @@ filter_params = {}
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Receive messages from Warden, find suspicious URLs and save them to evaluator database.")
-parser.add_argument('--config', '-c', action='store', default=os.path.join(os.path.dirname(__file__), '../etc/config.yaml'), help='Path to evaluator config file')
+parser.add_argument('--config', '-c', action='store', default="/etc/url_evaluator/config.yaml", help='Path to evaluator config file')
 parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
 
 if __name__ == "__main__":
     args = parser.parse_args()
 else:
-    # When imported (e.g. by pytest), use defaults relative to workspace root
-    args = argparse.Namespace(config="etc/config.yaml", verbose=False)
+    # When imported (mod_wsgi in production, pytest), use the installed config;
+    # URL_EVALUATOR_CONFIG overrides it. The repo etc/config.yaml below is only
+    # a fallback for development/tests.
+    args = argparse.Namespace(config=os.environ.get("URL_EVALUATOR_CONFIG", "/etc/url_evaluator/config.yaml"), verbose=False)
 
 # Set logger
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
