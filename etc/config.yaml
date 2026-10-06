@@ -96,7 +96,7 @@ urlhaus_key: "!!! CHANGE THIS !!!"
 mb_url: "https://mb-api.abuse.ch/api/v1/"
 mb_key: "!!! CHANGE THIS !!!"
 
-# Hybrid Analysis (Falcon Sandbox) – SHA-256 lookup of downloaded content
+# Hybrid Analysis (Falcon Sandbox) - SHA-256 lookup of downloaded content
 # (read-only: checks whether the sample was already analysed, never submits it).
 # Lookups are disabled while the key is not set.
 ha_url: "https://hybrid-analysis.com/api/v2"
