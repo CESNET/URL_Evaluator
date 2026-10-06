@@ -1,6 +1,11 @@
 # Path to database file
 db_path: "/data/url_evaluator/db.sqlite"
 
+# Directory where downloaded URL content (malware samples) is stored.
+# Files are deduplicated by SHA-256 and sharded into subdirectories;
+# the SQLite DB only stores metadata + the path to each file.
+content_dir: "/data/url_evaluator/content"
+
 # Scheduler config
 # Uses common cron-style format, e.g.:
 #   hour: */4
@@ -57,11 +62,12 @@ warden_config: "/etc/url_evaluator/warden_client.cfg"
 warden_filter:
   cat: "Intrusion.UserCompromise"
 
-# Warden source mapping (dict[source -> dict[idea_field -> regex]])
-# Events that do not match any of the listed patterns will be ignored
+# Warden source mapping (dict[source -> dict[field -> regex]])
+# Events not matching any source will be ignored
 warden_sources:
   "CESNET Hugo":
     "Node.SW": "Cowrie with Warden Filer"
+    "Node.SW": "hugo-cowrie"
   "CZ.NIC HaaS":
     "Node.Name": "cznic_haas"
   "Warden (unknown node)": {}  # matches everything
@@ -89,6 +95,14 @@ urlhaus_key: "!!! CHANGE THIS !!!"
 # MalwareBazaar
 mb_url: "https://mb-api.abuse.ch/api/v1/"
 mb_key: "!!! CHANGE THIS !!!"
+
+# Hybrid Analysis (Falcon Sandbox) - SHA-256 lookup of downloaded content
+# (read-only: checks whether the sample was already analysed, never submits it).
+# Lookups are disabled while the key is not set.
+ha_url: "https://hybrid-analysis.com/api/v2"
+ha_key: "!!! CHANGE THIS !!!"
+ha_recheck_hours: 12 # minimal age of a stored result before the hash is queried again
+ha_stats_interval_minutes: 10 # evaluator logs Hybrid Analysis usage (requests/min, 429s) this often
 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"

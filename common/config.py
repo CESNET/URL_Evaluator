@@ -5,7 +5,7 @@ class Config:
     def __init__(self, path) -> None:
         if not os.path.exists(path):
             raise FileNotFoundError(f"File {path} not found")
-        with open(path) as file:
+        with open(path, encoding="utf-8") as file:
             try:
                 self.config = yaml.safe_load(file)
             except yaml.YAMLError as e:
