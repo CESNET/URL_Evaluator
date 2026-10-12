@@ -334,6 +334,11 @@ def list_all():
     filter_params["order_key"] = order_key
     filters = parse_filters()
 
+    # Which filter keys (excluding sorting) count as "a filter is applied" for
+    # the URL count summary shown in the GUI.
+    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content")
+    filters_active = any(filter_params.get(k) for k in filter_keys)
+
     with SQLiteWrapper(config.db_path) as db:
         # get url details
         url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
@@ -341,11 +346,13 @@ def list_all():
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()
 
-        # get number of pages
+        # get number of pages and URL counts (record_count respects the active
+        # filters, total_count is the size of the whole URL table)
         record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
+        total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active)
 
 
 class URLDetail:

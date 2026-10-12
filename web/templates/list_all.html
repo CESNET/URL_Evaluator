@@ -178,6 +178,14 @@
   {% endif %}
 
   <div class="select select-all"> <input type="checkbox" onclick=selectAll(this) /> Select All</div>
+  <!-- URL count summary: total when no filter is applied, matching vs. total otherwise -->
+  <div class="list-summary">
+    {% if filters_active %}
+    <p>Showing <strong>{{ record_count }}</strong> of <strong>{{ total_count }}</strong> URLs (filter applied)</p>
+    {% else %}
+    <p>Total URLs: <strong>{{ total_count }}</strong></p>
+    {% endif %}
+  </div>
   <table class="list" id="url-table">
     <thead>
       <tr>

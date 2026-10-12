@@ -12,6 +12,21 @@ table.list,
   border-radius: 10px;
 }
 
+/* URL count summary shown above the table (filtered vs. total count) */
+.list-summary {
+  width: 90%;
+  min-width: 800px;
+  max-width: 1200px;
+  margin: 10px auto 0 auto;
+  text-align: right;
+}
+
+.list-summary p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #595959;
+}
+
 table.list {
   background-color: rgb(247, 247, 247);
 }
