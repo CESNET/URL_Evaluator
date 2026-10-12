@@ -10,7 +10,7 @@ import base64
 import json
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file, flash
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -466,6 +466,10 @@ def detail():
         # Sandbox tab: Hybrid Analysis lookup stored per distinct content
         # (newest version first). The lookup itself runs in evaluator /
         # activity_scanner when the content is downloaded.
+        # Logged-in analysts may submit a sample whose hash lookup answered
+        # HTTP 404 (never analysed) and that has no active submission yet.
+        ha_submit_enabled = (not is_anonymous(user) and tab == 'sandbox' and hybrid_analysis is not None
+                             and hybrid_analysis.is_enabled(config))
         sandbox_entries = []
         seen_content = set()
         for v in reversed(content_versions):
@@ -475,12 +479,28 @@ def detail():
             seen_content.add(cid)
             row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (cid,)).fetchone()
             ha = hybrid_analysis.get_lookup(row[0]) if (row and hybrid_analysis is not None) else None
+            ha_submission = hybrid_analysis.get_submission(row[0]) if (row and hybrid_analysis is not None) else None
+            submission = None
+            if hybrid_analysis is not None and v.get("sha256"):
+                try:
+                    submission = hybrid_analysis.latest_submission(db, v["sha256"])
+                except Exception:
+                    submission = None  # migration 004 not applied
+            # Do not reveal analyst names to public viewers.
+            if submission and is_anonymous(user):
+                submission["submitted_by"] = "analyst"
+            submission_active = bool(submission and submission["status"] in ("pending", "running", "done"))
             sandbox_entries.append({
                 "version": v["version"],
                 "content_id": cid,
                 "sha256": v.get("sha256"),
                 "ha": ha,
                 "ha_response_pretty": json.dumps(ha.get("response"), indent=2) if ha else None,
+                "submission": submission,
+                "ha_submission": ha_submission,
+                "can_submit": bool(ha_submit_enabled and hybrid_analysis.is_submittable(ha)
+                                   and not submission_active
+                                   and resolve_content_file(v.get("file_path"))),
             })
         ha_lookup_by_content = {e["content_id"]: e["ha"] for e in sandbox_entries}
 
@@ -534,7 +554,11 @@ def detail():
         content_range_end=content_range_end,
         current_classification=current_classification,
         sandbox_entries=sandbox_entries,
-        ha_lookup_by_content=ha_lookup_by_content
+        ha_lookup_by_content=ha_lookup_by_content,
+        ha_submit_enabled=ha_submit_enabled,
+        ha_environments=hybrid_analysis.ENVIRONMENTS if hybrid_analysis is not None else {},
+        ha_default_environment=getattr(config, "ha_environment_id", None)
+                               or (hybrid_analysis.DEFAULT_ENVIRONMENT_ID if hybrid_analysis is not None else None)
     )
 
 
@@ -655,6 +679,25 @@ def api_url_stats():
     return make_response(jsonify(return_dict), 200)
 
 
+def resolve_content_file(file_path):
+    """
+    Return the real path of a stored content file when it exists inside the
+    configured content_dir, otherwise None. The path always comes from the DB,
+    the confinement guards against a tampered/moved file_path.
+    """
+    content_dir = getattr(config, "content_dir", None)
+    if not file_path or not content_dir:
+        return None
+    try:
+        base = os.path.realpath(content_dir)
+        real = os.path.realpath(file_path)
+    except Exception:
+        return None
+    if not real.startswith(base + os.sep) or not os.path.isfile(real):
+        return None
+    return real
+
+
 @app.route('/content/download/<int:content_id>')
 def download_content(content_id):
     """
@@ -673,14 +716,8 @@ def download_content(content_id):
         abort(404)
     file_path, sha256, mime_type = row
 
-    # Resolve & confine to the configured content dir.
-    content_dir = getattr(config, "content_dir", None)
-    try:
-        base = os.path.realpath(content_dir) if content_dir else None
-        real = os.path.realpath(file_path)
-    except Exception:
-        abort(404)
-    if not real.startswith((base or "") + os.sep) or not os.path.isfile(real):
+    real = resolve_content_file(file_path)
+    if real is None:
         abort(404)
 
     short = (sha256 or "sample")[:24]
@@ -690,6 +727,62 @@ def download_content(content_id):
         as_attachment=True,
         download_name=f"{short}.bin",
     )
+
+
+# Message shown after a submission attempt: outcome -> (category, text).
+SUBMIT_MESSAGES = {
+    "submitted": ("success", "Sample submitted to Hybrid Analysis. The report appears after the next hash lookup."),
+    "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
+    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /search/hash did not return 404)."),
+    "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),
+    "submit_failed": ("error", "Hybrid Analysis rejected the submission."),
+    "skipped": ("error", "Not submitted: Hybrid Analysis API is disabled or paused after a rate limit (HTTP 429)."),
+}
+
+
+@app.route('/sandbox/submit/<int:content_id>', methods=['POST'])
+def sandbox_submit(content_id):
+    """
+    Submit a stored content sample to Hybrid Analysis (POST /submit/file).
+    Only for logged-in users; the sample is sent only when its hash lookup
+    (GET /search/hash, re-checked here) answers HTTP 404.
+    """
+    user = get_user(flask.request.environ)
+    url = flask.request.form.get('url', '')
+    show = flask.request.form.get('show') or None
+
+    # Sending a sample to a third party is an action -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning(f"Blocked sandbox submission of content {content_id} by anonymous user")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
+    if hybrid_analysis is None or not hybrid_analysis.is_enabled(config):
+        category, message = SUBMIT_MESSAGES["skipped"]
+        flash(message, category)
+        return redirect(url_for('detail', url=url, show=show, tab='sandbox'))
+
+    try:
+        environment_id = int(flask.request.form.get('environment_id', ''))
+    except ValueError:
+        environment_id = None
+    if environment_id not in hybrid_analysis.ENVIRONMENTS:
+        return make_response(jsonify({'error': 'Unknown environment_id'}), 400)
+
+    with SQLiteWrapper(config.db_path) as db:
+        row = db.execute("SELECT file_path, sha256 FROM content WHERE id = ?", (content_id,)).fetchone()
+        if not row:
+            abort(404)
+        file_path = resolve_content_file(row[0])
+        if file_path is None:
+            abort(404)
+        result, outcome = hybrid_analysis.submit_content(
+            db, config, content_id, file_path, row[1], user, environment_id)
+
+    logger.info(f"Hybrid Analysis submission of content {content_id} ({row[1]}) by {user}: {outcome}")
+    category, message = SUBMIT_MESSAGES[outcome]
+    if outcome == "submit_failed" and result and result.get("error"):
+        message = f"{message.rstrip('.')}: {result['error']}"
+    flash(message, category)
+    return redirect(url_for('detail', url=url, show=show, tab='sandbox'))
 
 
 if __name__ == '__main__':

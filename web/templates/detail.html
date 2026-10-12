@@ -368,9 +368,14 @@
         {# ============ TAB: SANDBOX (Hybrid Analysis hash lookup per content version) ============ #}
         {% if tab == 'sandbox' %}
         <div class="content content-tab">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <p class="flash {{ category }}">{{ message }}</p>
+            {% endfor %}
+            {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted.</p>
+                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted automatically &mdash; a logged-in analyst can submit a sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404).</p>
             </div>
 
             {% for e in sandbox_entries %}
@@ -387,6 +392,9 @@
                         <span class="ha-badge error">lookup failed</span>
                         {% else %}
                         <span class="ha-badge unknown">not checked</span>
+                        {% endif %}
+                        {% if e.submission and e.submission.status != 'error' %}
+                        <span class="ha-badge pending">submitted</span>
                         {% endif %}
                     </div>
                     {% if ha and ha.http_status %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}
@@ -513,6 +521,47 @@
                             </td>
                         </tr>
                         {% endif %}
+                        {% endif %}
+                        {% if e.submission %}
+                        {% set sub = e.ha_submission or {} %}
+                        <tr>
+                            <td>Submission</td>
+                            <td>
+                                <span class="ha-badge {{ e.submission.status }}">{{ e.submission.status }}</span>
+                                {{ e.submission.submitted_at|fmt_ts }} by {{ e.submission.submitted_by or 'analyst' }}
+                                {% if sub.environment_id %}<span class="sandbox-sep">&middot;</span>{{ ha_environments.get(sub.environment_id, sub.environment_id) }}{% endif %}
+                                {% if sub.job_id %}<span class="sandbox-sep">&middot;</span>job <span class="mono">{{ sub.job_id }}</span>{% endif %}
+                                {% if e.submission.status == 'error' and sub.error %}<span class="sandbox-sep">&middot;</span><span class="ha-error">{{ sub.error }}</span>{% endif %}
+                                {% if e.submission.report_url and e.submission.status != 'error' %}
+                                <a class="sandbox-report" href="{{ e.submission.report_url }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if e.can_submit %}
+                        <tr>
+                            <td>Submit</td>
+                            <td>
+                                <form class="ha-submit-form" method="post"
+                                      action="{{ url_for('sandbox_submit', content_id=e.content_id) }}"
+                                      onsubmit="return confirm('Submit this sample to Hybrid Analysis? The sample and its report will be public.');">
+                                    <input type="hidden" name="url" value="{{ url.url }}">
+                                    <input type="hidden" name="show" value="{{ show or '' }}">
+                                    <select name="environment_id" title="Analysis environment">
+                                        {% for env_id, env_name in ha_environments.items() %}
+                                        <option value="{{ env_id }}" {% if env_id == ha_default_environment %}selected{% endif %}>{{ env_name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="submit" class="btn-style ha-submit-btn">Submit to Hybrid Analysis</button>
+                                </form>
+                                <p class="ha-submit-note">POST /submit/file &mdash; submitted samples and their reports are public on Hybrid Analysis.</p>
+                            </td>
+                        </tr>
+                        {% elif ha_submit_enabled and not e.submission and not (ha and ha.tested) %}
+                        <tr>
+                            <td>Submit</td>
+                            <td class="derived-none">Available once the hash lookup (GET /search/hash) returned HTTP 404 and the sample file is stored.</td>
+                        </tr>
                         {% endif %}
                     </tbody>
                 </table>
