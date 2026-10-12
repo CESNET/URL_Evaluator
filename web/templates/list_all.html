@@ -108,6 +108,15 @@
             <option {%if filter_params["has_content"]=='no' %} selected {% endif %} value="no">No content</option>
           </select>
         </div>
+
+        <div>
+          <label class="filter-label" for="sandbox">Sandbox:</label>
+          <select name="sandbox" id="filter-sandbox">
+            <option selected value="">---select---</option>
+            <option {%if filter_params["sandbox"]=='not_analysed' %} selected {% endif %} value="not_analysed"
+                    title="Hybrid Analysis hash lookup (GET /search/hash) returned HTTP 404">Not analysed by Hybrid Analysis</option>
+          </select>
+        </div>
       </div>
 
       <button class="btn-style filter-submit" type="submit">Search</button>

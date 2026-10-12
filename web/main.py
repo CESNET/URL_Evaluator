@@ -213,6 +213,18 @@ def parse_filters():
                 parsed_filters += f" AND {exists_clause}"
             elif value == "no":
                 parsed_filters += f" AND NOT {exists_clause}"
+        # Filter on the Hybrid Analysis lookup stored per content:
+        # "not_analysed" -> the newest downloaded content of the URL (same
+        # ordering as content_store.latest_content_id) has a lookup where
+        # GET /search/hash answered HTTP 404 (hash never analysed).
+        if param == "sandbox" and value == "not_analysed":
+            parsed_filters += (
+                " AND (SELECT CASE WHEN json_valid(c.sandbox_info) "  # json_extract() raises on invalid JSON
+                "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') END "
+                "FROM download_observations d JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url "
+                "ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = 404"
+            )
     parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
 
@@ -285,6 +297,9 @@ def list_all():
 
             filter_has_content = flask.request.form.get('has_content', '').strip()
             filter_params["has_content"] = filter_has_content
+
+            filter_sandbox = flask.request.form.get('sandbox', '').strip()
+            filter_params["sandbox"] = filter_sandbox
         except BadRequestKeyError:
             pass
 
@@ -336,7 +351,7 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content")
+    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox")
     filters_active = any(filter_params.get(k) for k in filter_keys)
 
     with SQLiteWrapper(config.db_path) as db:
