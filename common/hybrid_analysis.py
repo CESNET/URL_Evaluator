@@ -1,12 +1,17 @@
 #Author: Lukáš Šimoník, xsimonl00@stud.fit.vutbr.cz
 
 """
-Read-only Hybrid Analysis (Falcon Sandbox) hash lookups for stored content.
+Hybrid Analysis (Falcon Sandbox) hash lookups and manual submissions of stored content.
 
 For each payload stored by ``content_store``, its SHA-256 is looked up to see
-whether the sample has already been detonated. Nothing is ever submitted.
-The result is stored as JSON in ``content.sandbox_info`` under the
-``"hybrid_analysis"`` key.
+whether the sample has already been detonated. The result is stored as JSON in
+``content.sandbox_info`` under the ``"hybrid_analysis"`` key.
+
+Samples are never submitted automatically. An analyst can submit a sample
+from the web UI (``submit_content``), but only when ``GET /search/hash``
+answered HTTP 404 (hash never analysed). The submission is logged in the
+``sandbox_submissions`` table and its API answer is stored in
+``content.sandbox_info`` under the ``"hybrid_analysis_submission"`` key.
 """
 
 import json
@@ -29,6 +34,24 @@ DEFAULT_RECHECK_HOURS = 12
 _ANSWER_STATUSES = (200, 404)
 # Back-off after HTTP 429 when the server does not say how long to wait.
 DEFAULT_BACKOFF_SECONDS = 3600
+
+# Name of this sandbox in the sandbox_submissions table.
+SANDBOX_NAME = "hybrid_analysis"
+# Analysis environments accepted by POST /submit/file (environment_id -> name).
+ENVIRONMENTS = {
+    330: "Linux (Ubuntu 24.04, 64 bit)",
+    160: "Windows 10 64 bit",
+    140: "Windows 11 64 bit",
+    120: "Windows 7 64 bit",
+    100: "Windows 7 32 bit",
+    110: "Windows 7 32 bit (HWP Support)",
+    200: "Android Static Analysis",
+    430: "macOS Tahoe (ARM64)",
+}
+# Honeypot downloads are mostly Linux binaries and shell scripts.
+DEFAULT_ENVIRONMENT_ID = 330
+# Submissions that are still valid -- a hash is not submitted again while one exists.
+_ACTIVE_SUBMISSION_STATUSES = ("pending", "running", "done")
 
 # Overview fields worth keeping (the full Overview object is large).
 _OVERVIEW_FIELDS = (
@@ -79,11 +102,17 @@ def request_stats():
 
 
 def _get(url, **kwargs):
-    """requests.get() that records the request for request_stats() and logs
+    """GET via _request(); statuses in _ANSWER_STATUSES (e.g. 404 = hash not
+    analysed yet) are valid answers and are not logged as unexpected."""
+    return _request("GET", url, _ANSWER_STATUSES, **kwargs)
+
+
+def _request(method, url, expected_statuses, **kwargs):
+    """requests.request() that records the request for request_stats() and logs
     every unexpected status (429 included) clearly."""
     global _last_api_limits
     try:
-        r = requests.get(url, **kwargs)
+        r = requests.request(method, url, **kwargs)
     except requests.exceptions.RequestException as e:
         with _stats_lock:
             _request_times.append(time.monotonic())
@@ -95,9 +124,9 @@ def _get(url, **kwargs):
         _request_statuses[r.status_code] += 1
         if limits is not None:
             _last_api_limits = limits
-    if r.status_code not in _ANSWER_STATUSES:
+    if r.status_code not in expected_statuses:
         logger.warning(
-            f"Hybrid Analysis API returned HTTP {r.status_code} for {url.split('/api/v2', 1)[-1]}"
+            f"Hybrid Analysis API returned HTTP {r.status_code} for {method} {url.split('/api/v2', 1)[-1]}"
             f" (Retry-After: {r.headers.get('Retry-After')}, Api-Limits: {limits})"
         )
     return r
@@ -124,14 +153,18 @@ def _headers(api_key):
     }
 
 
-def _parse_api_limits(response):
-    raw = response.headers.get("Api-Limits")
+def _parse_json_header(response, name):
+    raw = response.headers.get(name)
     if not raw:
         return None
     try:
         return json.loads(raw)
     except ValueError:
         return raw
+
+
+def _parse_api_limits(response):
+    return _parse_json_header(response, "Api-Limits")
 
 
 def _json_or_text(response):
@@ -253,6 +286,16 @@ def get_lookup(sandbox_info_json):
     return _load_sandbox_info(sandbox_info_json).get("hybrid_analysis")
 
 
+def get_submission(sandbox_info_json):
+    """Return the stored POST /submit/file result from a content.sandbox_info value."""
+    return _load_sandbox_info(sandbox_info_json).get("hybrid_analysis_submission")
+
+
+def is_submittable(lookup):
+    """True when the stored lookup says the hash was never analysed (GET /search/hash -> HTTP 404)."""
+    return bool(lookup) and lookup.get("http_status") == 404
+
+
 def check_content(db, config, content_id, sha256, force=False):
     """
     Look up a stored content sample on Hybrid Analysis and persist the result
@@ -282,7 +325,9 @@ def check_content_outcome(db, config, content_id, sha256, force=False):
         info = _load_sandbox_info(row[0] if row else None)
         previous = info.get("hybrid_analysis")
 
-        if previous and not force and previous.get("http_status") in _ANSWER_STATUSES:
+        # A lookup marked stale (the sample was submitted since) is never reused.
+        if (previous and not force and not previous.get("stale")
+                and previous.get("http_status") in _ANSWER_STATUSES):
             try:
                 age = datetime.now(timezone.utc) - datetime.fromisoformat(previous["checked_at"])
                 if age < timedelta(hours=getattr(config, "ha_recheck_hours", DEFAULT_RECHECK_HOURS)):
@@ -307,3 +352,144 @@ def check_content_outcome(db, config, content_id, sha256, force=False):
     except Exception as e:
         logger.warning(f"Could not store Hybrid Analysis result for content {content_id}: {e}")
         return None, "failed"
+
+
+def submit_file(config, file_path, sha256, environment_id, comment=None):
+    """
+    Send a stored sample to Hybrid Analysis (POST /submit/file).
+
+    Returns a result dict (``submission_id`` / ``job_id`` are set on success,
+    ``error`` otherwise), or None when the API is disabled or paused due to
+    rate limiting. Never raises.
+    """
+    api_url, api_key = _api_settings(config)
+    if api_key is None or _rate_limited():
+        logger.debug(f"Hybrid Analysis submission of {sha256} skipped (disabled or rate-limited)")
+        return None
+
+    result = {
+        "submitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "sha256": sha256,
+        "environment_id": environment_id,
+        "http_status": None,
+        "error": None,
+        "job_id": None,
+        "submission_id": None,
+        "api_limits": None,
+        "submission_limits": None,
+        "sample_url": None,
+        "response": None,
+    }
+    data = {"environment_id": environment_id}
+    if comment:
+        data["comment"] = comment
+    try:
+        with open(file_path, "rb") as f:
+            # The file name only serves file type detection, the sample is
+            # stored on disk under its SHA-256.
+            r = _request("POST", f"{api_url}/submit/file", (201,),
+                         headers=_headers(api_key), data=data,
+                         files={"file": (f"{sha256}.bin", f, "application/octet-stream")},
+                         timeout=120, allow_redirects=False)  # a redirect would turn the POST into GET
+    except OSError as e:
+        logger.warning(f"Hybrid Analysis submission of {sha256}: cannot read {file_path}: {e}")
+        result["error"] = f"Cannot read stored sample: {type(e).__name__}"
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Hybrid Analysis submission of {sha256} failed: {e}")
+        result["error"] = f"Request failed: {type(e).__name__}"
+        return result
+
+    result["http_status"] = r.status_code
+    result["api_limits"] = _parse_api_limits(r)
+    result["submission_limits"] = _parse_json_header(r, "Submission-Limits")
+    body = _json_or_text(r)
+    result["response"] = body
+
+    if r.status_code == 429:
+        _block(r)
+    if r.status_code != 201:
+        message = body.get("message") if isinstance(body, dict) else None
+        result["error"] = message or f"HTTP {r.status_code}"
+        logger.warning(f"Hybrid Analysis submission of {sha256} returned HTTP {r.status_code}: {result['error']}")
+        return result
+
+    if isinstance(body, dict):
+        result["job_id"] = body.get("job_id")
+        result["submission_id"] = body.get("submission_id")
+    result["sample_url"] = SAMPLE_URL.format(sha256=sha256)
+    logger.info(f"Hybrid Analysis: {sha256} submitted (environment {environment_id}, "
+                f"job {result['job_id']}, submission {result['submission_id']})")
+    return result
+
+
+def latest_submission(db, sha256):
+    """
+    Return the newest Hybrid Analysis row of ``sandbox_submissions`` for
+    `sha256` as a dict, or None.
+    """
+    row = db.execute(
+        "SELECT submitted_at, submitted_by, status, report_url FROM sandbox_submissions "
+        "WHERE sha256 = ? AND sandbox_name = ? ORDER BY submitted_at DESC, id DESC LIMIT 1",
+        (sha256, SANDBOX_NAME),
+    ).fetchone()
+    if not row:
+        return None
+    return {"submitted_at": row[0], "submitted_by": row[1], "status": row[2], "report_url": row[3]}
+
+
+def submit_content(db, config, content_id, file_path, sha256, user, environment_id):
+    """
+    Submit a stored content sample to Hybrid Analysis on behalf of `user`.
+
+    The sample is sent only when no active submission of the hash exists and a
+    fresh GET /search/hash answers HTTP 404 (never analysed). Every attempt that
+    reaches POST /submit/file is logged in ``sandbox_submissions``.
+
+    Returns ``(result, outcome)`` where outcome is
+      * 'submitted'         -- the API accepted the sample (HTTP 201)
+      * 'already_submitted' -- an active submission of this hash exists
+      * 'already_analysed'  -- the hash lookup did not answer 404
+      * 'lookup_failed'     -- the hash lookup failed (e.g. 429, 5xx, timeout)
+      * 'submit_failed'     -- POST /submit/file failed
+      * 'skipped'           -- API disabled or paused after a 429
+    Never raises.
+    """
+    if not is_enabled(config):
+        return None, "skipped"
+    try:
+        previous = latest_submission(db, sha256)
+        if previous and previous["status"] in _ACTIVE_SUBMISSION_STATUSES:
+            return previous, "already_submitted"
+
+        lookup, outcome = check_content_outcome(db, config, content_id, sha256, force=True)
+        if outcome == "skipped":
+            return lookup, "skipped"
+        if outcome != "checked":
+            return lookup, "lookup_failed"
+        if not is_submittable(lookup):
+            return lookup, "already_analysed"
+
+        result = submit_file(config, file_path, sha256, environment_id,
+                             comment=getattr(config, "ha_submit_comment", None))
+        if result is None:
+            return None, "skipped"
+        ok = result["error"] is None
+        db.execute(
+            "INSERT INTO sandbox_submissions (content_id, sha256, sandbox_name, submitted_at, "
+            "submitted_by, status, report_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (content_id, sha256, SANDBOX_NAME, result["submitted_at"], user,
+             "pending" if ok else "error", result["sample_url"]),
+        )
+        row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (content_id,)).fetchone()
+        info = _load_sandbox_info(row[0] if row else None)
+        info["hybrid_analysis_submission"] = result
+        # The sample gets a report soon -- make the next evaluator /
+        # activity_scanner run query the hash again instead of reusing the 404.
+        if ok and info.get("hybrid_analysis"):
+            info["hybrid_analysis"]["stale"] = True
+        db.execute("UPDATE content SET sandbox_info = ? WHERE id = ?", (json.dumps(info), content_id))
+        return result, "submitted" if ok else "submit_failed"
+    except Exception as e:
+        logger.warning(f"Could not submit content {content_id} to Hybrid Analysis: {e}")
+        return None, "submit_failed"
