@@ -448,6 +448,11 @@
                                 {% endif %}
                             </td>
                         </tr>
+                        {% set report_url = ha.sample_url or ('https://hybrid-analysis.com/sample/' ~ e.sha256) %}
+                        <tr>
+                            <td>Report</td>
+                            <td class="mono"><a class="link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
+                        </tr>
                         {% if ov.vx_family %}
                         <tr>
                             <td>Malware family</td>
