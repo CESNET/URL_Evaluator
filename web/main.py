@@ -213,17 +213,19 @@ def parse_filters():
                 parsed_filters += f" AND {exists_clause}"
             elif value == "no":
                 parsed_filters += f" AND NOT {exists_clause}"
-        # Filter on the Hybrid Analysis lookup stored per content:
-        # "not_analysed" -> the newest downloaded content of the URL (same
-        # ordering as content_store.latest_content_id) has a lookup where
-        # GET /search/hash answered HTTP 404 (hash never analysed).
-        if param == "sandbox" and value == "not_analysed":
+        # Filter on the Hybrid Analysis lookup stored per content, checked on
+        # the newest downloaded content of the URL (same ordering as
+        # content_store.latest_content_id):
+        # "analysed"     -> GET /search/hash answered HTTP 200 (report exists)
+        # "not_analysed" -> GET /search/hash answered HTTP 404 (hash never analysed)
+        sandbox_status = {"analysed": 200, "not_analysed": 404}
+        if param == "sandbox" and value in sandbox_status:
             parsed_filters += (
                 " AND (SELECT CASE WHEN json_valid(c.sandbox_info) "  # json_extract() raises on invalid JSON
                 "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') END "
                 "FROM download_observations d JOIN content c ON c.id = d.content_id "
                 "WHERE d.url = urls.url "
-                "ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = 404"
+                f"ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = {sandbox_status[value]}"
             )
     parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
