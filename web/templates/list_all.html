@@ -51,6 +51,12 @@
         <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
+          <label class="filter-label" for="find-sha256">Content SHA-256</label>
+          <input class="filter-input" type="text" id="find-sha256" name="find-sha256" placeholder="SHA-256 of downloaded content" {%if
+            filter_params["sha256"] %} value="{{filter_params["sha256"]}}" {% endif %}>
+        </div>
+
+        <div>
           <label class="filter-label" for="find-reason">Reason</label>
           <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
             filter_params["reason"] %} value="{{filter_params[" reason"]}}" {% endif %}>

@@ -213,6 +213,15 @@ def parse_filters():
                 parsed_filters += f" AND {exists_clause}"
             elif value == "no":
                 parsed_filters += f" AND NOT {exists_clause}"
+        # Filter on the SHA-256 of any content downloaded from the URL
+        # (substring match; only hex digits are kept, the value goes into SQL).
+        if param == "sha256":
+            sha256 = re.sub(r"[^0-9a-f]", "", value.lower())
+            parsed_filters += (
+                " AND EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                f"WHERE d.url = urls.url AND c.sha256 LIKE '%{sha256}%')"
+            )
         # Filter on the Hybrid Analysis lookup stored per content, checked on
         # the newest downloaded content of the URL (same ordering as
         # content_store.latest_content_id):
@@ -281,6 +290,9 @@ def list_all():
 
             find_hash = flask.request.form['find-hash'].strip()
             filter_params["hash"] = find_hash
+
+            find_sha256 = flask.request.form.get('find-sha256', '').strip()
+            filter_params["sha256"] = find_sha256
 
             find_note = flask.request.form['find-note'].strip()
             filter_params["note"] = find_note
@@ -353,7 +365,7 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox")
+    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256")
     filters_active = any(filter_params.get(k) for k in filter_keys)
 
     with SQLiteWrapper(config.db_path) as db:
