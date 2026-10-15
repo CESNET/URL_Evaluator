@@ -176,3 +176,24 @@ CREATE INDEX idx_sandbox_subm_content    ON sandbox_submissions(content_id);
 CREATE INDEX idx_sandbox_subm_sha256     ON sandbox_submissions(sha256);
 CREATE INDEX idx_sandbox_subm_name       ON sandbox_submissions(sandbox_name);
 CREATE INDEX idx_sandbox_subm_submitted  ON sandbox_submissions(submitted_at);
+
+-- ============================================================================
+-- activity_scanner run progress
+-- ============================================================================
+-- One row per activity_scanner run; finished_at stays NULL while the run is in
+-- progress or after it was interrupted (service stop / server restart). The
+-- interrupted run is resumed on the next start of activity_scanner.
+CREATE TABLE activity_scanner_runs
+(
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at    TEXT NOT NULL,                    -- ISO timestamp (UTC)
+    finished_at   TEXT                              -- ISO timestamp (UTC), NULL = unfinished
+);
+
+-- URLs already re-polled by an unfinished run (cleared when the run finishes).
+CREATE TABLE activity_scanner_progress
+(
+    run_id        INTEGER NOT NULL REFERENCES activity_scanner_runs(id) ON DELETE CASCADE,
+    url           TEXT NOT NULL,
+    PRIMARY KEY (run_id, url)
+);

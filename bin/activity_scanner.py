@@ -30,6 +30,11 @@ except Exception:
 run_stats = Counter()
 run_stats_lock = threading.Lock()
 
+# Set by the signal handler: workers stop after the URL they are processing.
+stop_event = threading.Event()
+# Only one run at a time (a resumed run may overlap the scheduled one).
+run_lock = threading.Lock()
+
 
 def _count(key, n=1):
     with run_stats_lock:
@@ -99,12 +104,18 @@ def _record_daily_fetch(db, url, response, body, fetched_at):
         logger.warning(f"Thread: could not record daily fetch for {url}: {e}")
 
 
-def thread_func(thread_id, urls):
+def thread_func(thread_id, run_id, urls):
     """Worker process: re-poll each URL, record a download observation (content
-    dedup + change detection) and update its active/inactive status."""
+    dedup + change detection) and update its active/inactive status. Every
+    finished URL is stored in activity_scanner_progress, so a run interrupted
+    by a stop signal is resumed from where it ended."""
     with SQLiteWrapper(config.db_path) as db:
         for url, current_status, last_active in urls:
+            if stop_event.is_set():
+                logger.info(f"Thread {thread_id}: Stop requested, leaving remaining URLs for the resumed run")
+                break
             if not is_valid(url):
+                _mark_processed(db, run_id, url)
                 continue
 
             # Send a HTTP request to check whether the URL is active
@@ -139,10 +150,40 @@ def thread_func(thread_id, urls):
             if new_status != current_status:
                 db.execute("UPDATE urls SET status_changed = 'yes' WHERE url = ?", (url,))
                 _count("urls_status_changed")
+            _mark_processed(db, run_id, url)
     logger.info(f'Thread {thread_id}: Finished')
 
 
+def _mark_processed(db, run_id, url):
+    """Remember that `url` is done in run `run_id`."""
+    db.execute("INSERT OR IGNORE INTO activity_scanner_progress (run_id, url) VALUES (?, ?)", (run_id, url))
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def unfinished_run(db):
+    """Return (id, started_at) of the last run when it did not finish, else None."""
+    return db.execute(
+        "SELECT id, started_at FROM activity_scanner_runs WHERE finished_at IS NULL "
+        "AND id = (SELECT MAX(id) FROM activity_scanner_runs)"
+    ).fetchone()
+
+
 def activity_scanner():
+    if not run_lock.acquire(blocking=False):
+        logger.warning("Job skipped: the previous run is still in progress")
+        return
+    try:
+        _run()
+    finally:
+        run_lock.release()
+
+
+def _run():
+    if stop_event.is_set():
+        return
     logger.info("Job started")
     started = time.monotonic()
     with run_stats_lock:
@@ -151,8 +192,20 @@ def activity_scanner():
         hybrid_analysis.reset_request_stats()
 
     with SQLiteWrapper(config.db_path) as db:
-        urls = db.execute("SELECT url, status, last_active FROM urls").fetchall()
-    logger.info(f"Loaded {len(urls)} URLs, processing...")
+        # Resume the last run when it was interrupted, otherwise start a new one.
+        previous = unfinished_run(db)
+        if previous:
+            run_id = previous[0]
+            done = db.execute("SELECT COUNT(*) FROM activity_scanner_progress WHERE run_id = ?", (run_id,)).fetchone()[0]
+            logger.info(f"Resuming interrupted run {run_id} started at {previous[1]} ({done} URLs already processed)")
+        else:
+            run_id = db.execute("INSERT INTO activity_scanner_runs (started_at) VALUES (?)", (_now(),)).lastrowid
+        urls = db.execute(
+            "SELECT url, status, last_active FROM urls WHERE NOT EXISTS "
+            "(SELECT 1 FROM activity_scanner_progress p WHERE p.run_id = ? AND p.url = urls.url)",
+            (run_id,)
+        ).fetchall()
+    logger.info(f"Run {run_id}: loaded {len(urls)} URLs, processing...")
 
     # Chunking: spawn one worker thread per chunk of max 1000 URLs, so URLs are re-polled in parallel.
     url_limit = 1000
@@ -161,7 +214,7 @@ def activity_scanner():
     for start_idx in range(0, len(urls), url_limit):
         chunk = urls[start_idx:start_idx + url_limit]
         logger.debug(f'Thread {thread_id}: first = {start_idx}, last = {len(chunk)}')
-        thread = threading.Thread(target=thread_func, args=(thread_id, chunk))
+        thread = threading.Thread(target=thread_func, args=(thread_id, run_id, chunk))
         thread_id += 1
         thread.start()
         threads.append(thread)
@@ -169,16 +222,30 @@ def activity_scanner():
     # Wait for every worker, then report the whole run.
     for thread in threads:
         thread.join()
-    _log_run_summary(len(urls), time.monotonic() - started)
+
+    interrupted = False
+    with SQLiteWrapper(config.db_path) as db:
+        remaining = db.execute(
+            "SELECT COUNT(*) FROM urls WHERE NOT EXISTS "
+            "(SELECT 1 FROM activity_scanner_progress p WHERE p.run_id = ? AND p.url = urls.url)",
+            (run_id,)
+        ).fetchone()[0]
+        if stop_event.is_set() and remaining:
+            interrupted = True
+            logger.info(f"Run {run_id} interrupted, {remaining} URLs left -- they are processed on the next start")
+        else:
+            db.execute("UPDATE activity_scanner_runs SET finished_at = ? WHERE id = ?", (_now(), run_id))
+            db.execute("DELETE FROM activity_scanner_progress WHERE run_id = ?", (run_id,))
+    _log_run_summary(len(urls), time.monotonic() - started, interrupted)
 
 
-def _log_run_summary(urls_loaded, elapsed):
+def _log_run_summary(urls_loaded, elapsed, interrupted=False):
     """Log what the finished run updated and how hard it used the Hybrid Analysis API."""
     with run_stats_lock:
         st = dict(run_stats)
     minutes = max(elapsed / 60, 1 / 60)
     logger.info(
-        f"Job finished in {elapsed / 60:.1f} min: {st.get('urls_updated', 0)}/{urls_loaded} URLs updated "
+        f"Job {'interrupted' if interrupted else 'finished'} after {elapsed / 60:.1f} min: {st.get('urls_updated', 0)}/{urls_loaded} URLs updated "
         f"(active {st.get('urls_active', 0)}, inactive {st.get('urls_inactive', 0)}, "
         f"status changed {st.get('urls_status_changed', 0)}), content stored for {st.get('content_stored', 0)} URLs"
     )
@@ -205,6 +272,8 @@ def _log_run_summary(urls_loaded, elapsed):
 
 def sigint_handler(signum, frame):
     logger.info("Signal {} received, going to stop".format({signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM", signal.SIGABRT: "SIGABRT"}.get(signum, signum)))
+    # Workers finish the URL they are processing, the rest is resumed on the next start.
+    stop_event.set()
     scheduler.shutdown(wait=True)
 
 
@@ -232,11 +301,6 @@ if __name__ == '__main__':
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
 
-    # Register signal handlers
-    signal.signal(signal.SIGINT, sigint_handler)
-    signal.signal(signal.SIGTERM, sigint_handler)
-    signal.signal(signal.SIGABRT, sigint_handler)
-
     # Set HTTP proxy
     proxies = {}
     if config.http_proxy:
@@ -245,13 +309,27 @@ if __name__ == '__main__':
             "https": config.http_proxy
         }
 
-    logger.info("Started")
-    if args.now:
-        activity_scanner()
-
     # Start scheduler
     scheduler = BlockingScheduler(timezone=config.scheduler["timezone"])
     scheduler.add_job(activity_scanner, "cron", **config.scheduler["activity_scanner"])
+
+    # Register signal handlers (the handler needs the scheduler)
+    signal.signal(signal.SIGINT, sigint_handler)
+    signal.signal(signal.SIGTERM, sigint_handler)
+    signal.signal(signal.SIGABRT, sigint_handler)
+
+    logger.info("Started")
+    try:
+        with SQLiteWrapper(config.db_path) as db:
+            interrupted = unfinished_run(db)
+    except Exception as e:
+        logger.fatal(f"Cannot read activity_scanner run state (apply DB migrations via install/migrate.sh): {e}")
+        sys.exit(1)
+    if interrupted:
+        logger.info(f"Run {interrupted[0]} started at {interrupted[1]} was interrupted, resuming it now")
+    # One-off job without a trigger runs right after the scheduler starts.
+    if interrupted or args.now:
+        scheduler.add_job(activity_scanner)
     scheduler.start()
 
     logger.info("Stopped")
