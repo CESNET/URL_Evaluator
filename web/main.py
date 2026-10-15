@@ -372,6 +372,10 @@ def list_all():
     # set order of the list
     order = flask.request.args.get("order", "desc")
     order_key = flask.request.args.get("key", "last_seen")
+    # "HA check" select in the filters panel sorts by the last Hybrid Analysis lookup.
+    ha_sort = flask.request.form.get('ha_sort', '') if flask.request.method == 'POST' else ''
+    if ha_sort in ("asc", "desc"):
+        order, order_key = ha_sort, "ha_checked"
 
     filter_params["order"] = order
     filter_params["order_key"] = order_key
@@ -384,7 +388,7 @@ def list_all():
 
     with SQLiteWrapper(config.db_path) as db:
         # get url details
-        url_list = db.execute(f"SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status, {HA_CHECKED_SQL} AS ha_checked FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
+        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
 
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()

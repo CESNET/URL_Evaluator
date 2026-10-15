@@ -125,6 +125,16 @@
                     title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 404">Not analysed by Hybrid Analysis</option>
           </select>
         </div>
+
+        <div>
+          <label class="filter-label" for="ha_sort">HA check:</label>
+          <select name="ha_sort" id="filter-ha-sort"
+                  title="Sort by when the newest content was last looked up on Hybrid Analysis (never looked up go last)">
+            <option value="">---select---</option>
+            <option {% if key == 'ha_checked' and order == 'desc' %} selected {% endif %} value="desc">Newest check first</option>
+            <option {% if key == 'ha_checked' and order == 'asc' %} selected {% endif %} value="asc">Oldest check first</option>
+          </select>
+        </div>
       </div>
 
       <button class="btn-style filter-submit" type="submit">Search</button>
@@ -260,15 +270,6 @@
               onclick="location.href='{{ url_for('list_all', show=show, order='desc', key='classification', page=1) }}'"></button>
           </div>
         </th>
-        <th class="ha_checked">
-          <p>HA checked</p>
-          <div class="sort">
-            <button class="up sort-btn {% if order == 'asc' and key == 'ha_checked' %}active{% endif %}"
-              onclick="location.href='{{ url_for('list_all', show=show, order='asc', key='ha_checked', page=1) }}'"></button>
-            <button class="down sort-btn {% if order == 'desc' and key == 'ha_checked' %}active{% endif %}"
-              onclick="location.href='{{ url_for('list_all', show=show, order='desc', key='ha_checked', page=1) }}'"></button>
-          </div>
-        </th>
         <th class="note"></th>
         <th class="reason">
           <p>Reason</p>
@@ -296,7 +297,6 @@
         <td class="classification {{ url[4] }}">
           <p>{{ url[4] }}</p>
         </td>
-        <td class="ha_checked" title="Last Hybrid Analysis lookup of the newest content">{{ url[8]|fmt_ts }}</td>
         <td class="note"> {% if url[6] != "" and url[6] %} <img src="{{ url_for("static", filename="img/note.png" ) }}"
             alt="note" title="{{ url[6] }}"> {% endif %} </td>
         <td class="reason">{{ url[5] }}</td>
