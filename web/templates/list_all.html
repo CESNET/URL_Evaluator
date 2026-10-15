@@ -127,6 +127,14 @@
         </div>
 
         <div>
+          <label class="filter-label" for="scanned_from" title="When activity_scanner last re-polled the URL (UTC)">Last scanned:</label>
+          <input class="filter-input" type="date" id="scanned_from" name="scanned_from" title="from (inclusive)"
+            {% if filter_params["scanned_from"] %} value="{{ filter_params["scanned_from"] }}" {% endif %}>
+          <input class="filter-input" type="date" id="scanned_to" name="scanned_to" title="to (inclusive)"
+            {% if filter_params["scanned_to"] %} value="{{ filter_params["scanned_to"] }}" {% endif %}>
+        </div>
+
+        <div>
           <label class="filter-label" for="ha_sort">HA check:</label>
           <select name="ha_sort" id="filter-ha-sort"
                   title="Sort by when the newest content was last looked up on Hybrid Analysis (never looked up go last)">

@@ -144,7 +144,8 @@ def thread_func(thread_id, run_id, urls):
             # Update DB record
             logger.debug(f'Thread {thread_id}: Updating DB record for {url}')
             last_active = datetime.now(timezone.utc).date() if new_status == 'active' else last_active
-            db.execute("UPDATE urls SET status = ?, last_active = ? WHERE url = ?", (new_status, last_active, url))
+            db.execute("UPDATE urls SET status = ?, last_active = ?, last_scanned = ? WHERE url = ?",
+                       (new_status, last_active, fetched_at, url))
             _count("urls_updated")
             _count(f"urls_{new_status}")
             if new_status != current_status:

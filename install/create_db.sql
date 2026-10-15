@@ -53,8 +53,11 @@ CREATE TABLE urls
     status_changed        TEXT DEFAULT 'no' CHECK (status_changed IN ('yes', 'no')),
     last_edit             TEXT,
     eval_later            TEXT DEFAULT 'no' CHECK (eval_later IN ('yes', 'no')),
-    domain                TEXT
+    domain                TEXT,
+    last_scanned          TEXT                  -- ISO timestamp (UTC) of the last activity_scanner check
 );
+
+CREATE INDEX idx_urls_last_scanned ON urls(last_scanned);
 
 -- Detailed log of every URL observation: WHERE it was seen (source pipeline + honeynet node) and WHEN
 CREATE TABLE observations

@@ -196,6 +196,10 @@ def parse_filters():
             parsed_filters += f" AND classification='{value}'"
         if param == "url":
             parsed_filters += f" AND url LIKE '%{value}%'"
+        # When activity_scanner last re-polled the URL (date range, UTC days).
+        if param in ("scanned_from", "scanned_to") and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            op = ">=" if param == "scanned_from" else "<="
+            parsed_filters += f" AND date(last_scanned) {op} '{value}'"
         # Quick search: URL substring, or (for a hex-only query of at least 8
         # characters) a substring of the SHA-256 of any downloaded content.
         if param == "q":
@@ -340,6 +344,9 @@ def list_all():
 
             filter_sandbox = flask.request.form.get('sandbox', '').strip()
             filter_params["sandbox"] = filter_sandbox
+
+            filter_params["scanned_from"] = flask.request.form.get('scanned_from', '').strip()
+            filter_params["scanned_to"] = flask.request.form.get('scanned_to', '').strip()
         except BadRequestKeyError:
             pass
 
@@ -395,7 +402,7 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256")
+    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256", "scanned_from", "scanned_to")
     filters_active = any(filter_params.get(k) for k in filter_keys)
 
     with SQLiteWrapper(config.db_path) as db:
