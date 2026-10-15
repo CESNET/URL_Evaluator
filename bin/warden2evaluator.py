@@ -68,7 +68,9 @@ def receiver():
 
         with SQLiteWrapper(config.db_path) as db:
             for event in events:
-                if not (source := get_source_name(event)):
+                # 'source' here is the honeynet node that captured the event (e.g. 'CESNET Hugo');
+                # the ingest collector/pipeline is always the Warden client
+                if not (honeynet := get_source_name(event)):
                     continue
                 for attachment in event.get("Attach", []):
                     if "Content" in attachment:
@@ -78,7 +80,7 @@ def receiver():
                         logger.debug(f"Looking for new URLs in '{content}'")
 
                         # Search for new URLs
-                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), source, None):
+                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), "Warden", None, honeynet):
                             logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
 
 

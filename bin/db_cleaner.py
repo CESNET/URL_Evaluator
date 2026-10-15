@@ -12,6 +12,10 @@ from apscheduler.schedulers.background import BlockingScheduler
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
+try:
+    from common import content_store
+except Exception:
+    content_store = None
 
 
 def db_cleaner():
@@ -21,8 +25,63 @@ def db_cleaner():
     cutoff_invalid = (date.today() - timedelta(days=config.max_age_invalid)).strftime("%Y-%m-%d")
 
     with SQLiteWrapper(config.db_path) as db:
-        num_deleted_inactive = db.execute("DELETE FROM urls WHERE last_seen < ? AND status='inactive'", (cutoff_inactive,)).rowcount
-        num_deleted_invalid = db.execute("DELETE FROM urls WHERE last_seen < ? AND classification='invalid'", (cutoff_invalid,)).rowcount
+        # ------------------------------------------------------------------
+        # 1. Resolve the URLs to delete up front, together with the content
+        #    ids their payloads reference. Deleting the URL rows cascades
+        #    (FK ON DELETE CASCADE from migration 005) to observations,
+        #    classification_history, url_session, url_source, discovered_urls
+        #    and download_observations -- but NOT to the shared `content`
+        #    table, whose samples may be referenced by other, surviving URLs.
+        # ------------------------------------------------------------------
+        urls_inactive = [r[0] for r in db.execute(
+            "SELECT url FROM urls WHERE last_seen < ? AND status='inactive'",
+            (cutoff_inactive,),
+        ).fetchall()]
+        urls_invalid = [r[0] for r in db.execute(
+            "SELECT url FROM urls WHERE last_seen < ? AND classification='invalid'",
+            (cutoff_invalid,),
+        ).fetchall()]
+
+        urls_to_delete = list(dict.fromkeys(urls_inactive + urls_invalid))
+        num_deleted_inactive = len(urls_inactive)
+        num_deleted_invalid = len(urls_invalid)
+
+        content_candidates = set()
+        if content_store is not None and urls_to_delete:
+            try:
+                content_candidates = {
+                    cid for cid, _ in
+                    content_store.content_ids_for_urls(db, urls_to_delete)
+                }
+            except Exception as e:
+                logger.warning(f"Could not resolve content for URLs being deleted: {e}")
+
+        # ------------------------------------------------------------------
+        # 2. Delete the URLs (cascade removes every dependent record in the
+        #    same transaction via execute_many -- F1/R1).
+        # ------------------------------------------------------------------
+        if urls_to_delete:
+            statements = [
+                (
+                    "DELETE FROM urls WHERE url = ?",
+                    (url,),
+                )
+                for url in urls_to_delete
+            ]
+            db.execute_many(statements)
+
+        # ------------------------------------------------------------------
+        # 3. Conditional disk/DB cleanup of content (F4/F5): only drop a
+        #    payload file + content row when *no* remaining download
+        #    observation references it (i.e. it is not shared by another URL).
+        #    Runs only after the URL deletion above committed successfully,
+        #    so a rollback can never leave files orphaned.
+        # ------------------------------------------------------------------
+        if content_store is not None and content_candidates:
+            try:
+                content_store.cleanup_orphan_content(db, candidates=content_candidates)
+            except Exception as e:
+                logger.warning(f"Orphan content cleanup failed: {e}")
 
     logger.info(f"Deleted {num_deleted_inactive} inactive and {num_deleted_invalid} invalid URLs")
     logger.info("Job finished")
