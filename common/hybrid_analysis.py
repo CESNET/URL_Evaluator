@@ -8,7 +8,7 @@ whether the sample has already been detonated. The result is stored as JSON in
 ``content.sandbox_info`` under the ``"hybrid_analysis"`` key.
 
 Samples are never submitted automatically. An analyst can submit a sample
-from the web UI (``submit_content``), but only when ``GET /search/hash``
+from the web UI (``submit_content``), but only when ``GET /overview/{sha256}``
 answered HTTP 404 (hash never analysed). The submission is logged in the
 ``sandbox_submissions`` table and its API answer is stored in
 ``content.sandbox_info`` under the ``"hybrid_analysis_submission"`` key.
@@ -225,8 +225,7 @@ def lookup_sha256(config, sha256):
         "response": None,
     }
     try:
-        r = _get(f"{api_url}/search/hash", params={"hash": sha256},
-                 headers=_headers(api_key), timeout=30)
+        r = _get(f"{api_url}/overview/{sha256}", headers=_headers(api_key), timeout=30)
     except requests.exceptions.RequestException as e:
         logger.warning(f"Hybrid Analysis lookup of {sha256} failed: {e}")
         result["error"] = f"Request failed: {type(e).__name__}"
@@ -242,31 +241,21 @@ def lookup_sha256(config, sha256):
     if r.status_code == 404:
         logger.debug(f"Hybrid Analysis: {sha256} has not been analysed yet")
         return result
-    if not r.ok:
+    if not r.ok or not isinstance(body, dict):
         message = body.get("message") if isinstance(body, dict) else None
         result["error"] = message or f"HTTP {r.status_code}"
         logger.warning(f"Hybrid Analysis lookup of {sha256} returned HTTP {r.status_code}: {result['error']}")
         return result
 
-    reports = body.get("reports") if isinstance(body, dict) else None
-    result["reports"] = reports or []
-    result["tested"] = bool(reports)
-    if not result["tested"]:
-        logger.debug(f"Hybrid Analysis: {sha256} has not been analysed yet")
-        return result
-
+    # An Overview exists -> Hybrid Analysis knows the hash.
+    result["tested"] = True
     result["sample_url"] = SAMPLE_URL.format(sha256=sha256)
-    logger.info(f"Hybrid Analysis: {sha256} already analysed ({len(reports)} report(s))")
-
-    # Aggregated verdict / threat score (best effort, not fatal).
-    try:
-        o = _get(f"{api_url}/overview/{sha256}", headers=_headers(api_key), timeout=30)
-        if o.status_code == 429:
-            _block(o)
-        elif o.ok and isinstance(ov := _json_or_text(o), dict):
-            result["overview"] = {k: ov.get(k) for k in _OVERVIEW_FIELDS if ov.get(k) not in (None, "", [])}
-    except requests.exceptions.RequestException as e:
-        logger.debug(f"Hybrid Analysis overview of {sha256} failed: {e}")
+    result["overview"] = {k: body.get(k) for k in _OVERVIEW_FIELDS if body.get(k) not in (None, "", [])}
+    # Per-environment verdicts of this sample; Overview.reports holds only report IDs.
+    related = [rep for rep in (body.get("related_reports") or [])
+               if isinstance(rep, dict) and rep.get("sha256") in (None, sha256)]
+    result["reports"] = related or [{"job_id": rid} for rid in (body.get("reports") or [])]
+    logger.info(f"Hybrid Analysis: {sha256} already analysed ({len(result['reports'])} report(s))")
     return result
 
 
@@ -292,7 +281,7 @@ def get_submission(sandbox_info_json):
 
 
 def is_submittable(lookup):
-    """True when the stored lookup says the hash was never analysed (GET /search/hash -> HTTP 404)."""
+    """True when the stored lookup says the hash was never analysed (GET /overview/{sha256} -> HTTP 404)."""
     return bool(lookup) and lookup.get("http_status") == 404
 
 
@@ -443,7 +432,7 @@ def submit_content(db, config, content_id, file_path, sha256, user, environment_
     Submit a stored content sample to Hybrid Analysis on behalf of `user`.
 
     The sample is sent only when no active submission of the hash exists and a
-    fresh GET /search/hash answers HTTP 404 (never analysed). Every attempt that
+    fresh GET /overview/{sha256} answers HTTP 404 (never analysed). Every attempt that
     reaches POST /submit/file is logged in ``sandbox_submissions``.
 
     Returns ``(result, outcome)`` where outcome is

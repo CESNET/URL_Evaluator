@@ -520,7 +520,7 @@
                             <td>Raw response</td>
                             <td>
                                 <details class="ha-raw">
-                                    <summary>GET /search/hash &mdash; HTTP {{ ha.http_status }}</summary>
+                                    <summary>GET /overview/{sha256} &mdash; HTTP {{ ha.http_status }}</summary>
                                     <pre class="mono">{{ e.ha_response_pretty }}</pre>
                                 </details>
                             </td>
@@ -565,7 +565,7 @@
                         {% elif ha_submit_enabled and not e.submission and not (ha and ha.tested) %}
                         <tr>
                             <td>Submit</td>
-                            <td class="derived-none">Available once the hash lookup (GET /search/hash) returned HTTP 404 and the sample file is stored.</td>
+                            <td class="derived-none">Available once the hash lookup (GET /overview/{sha256}) returned HTTP 404 and the sample file is stored.</td>
                         </tr>
                         {% endif %}
                     </tbody>

@@ -216,8 +216,8 @@ def parse_filters():
         # Filter on the Hybrid Analysis lookup stored per content, checked on
         # the newest downloaded content of the URL (same ordering as
         # content_store.latest_content_id):
-        # "analysed"     -> GET /search/hash answered HTTP 200 (report exists)
-        # "not_analysed" -> GET /search/hash answered HTTP 404 (hash never analysed)
+        # "analysed"     -> GET /overview/{sha256} answered HTTP 200 (report exists)
+        # "not_analysed" -> GET /overview/{sha256} answered HTTP 404 (hash never analysed)
         sandbox_status = {"analysed": 200, "not_analysed": 404}
         if param == "sandbox" and value in sandbox_status:
             parsed_filters += (
@@ -750,7 +750,7 @@ def download_content(content_id):
 SUBMIT_MESSAGES = {
     "submitted": ("success", "Sample submitted to Hybrid Analysis. The report appears after the next hash lookup."),
     "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
-    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /search/hash did not return 404)."),
+    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /overview/{sha256} did not return 404)."),
     "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),
     "submit_failed": ("error", "Hybrid Analysis rejected the submission."),
     "skipped": ("error", "Not submitted: Hybrid Analysis API is disabled or paused after a rate limit (HTTP 429)."),
@@ -762,7 +762,7 @@ def sandbox_submit(content_id):
     """
     Submit a stored content sample to Hybrid Analysis (POST /submit/file).
     Only for logged-in users; the sample is sent only when its hash lookup
-    (GET /search/hash, re-checked here) answers HTTP 404.
+    (GET /overview/{sha256}, re-checked here) answers HTTP 404.
     """
     user = get_user(flask.request.environ)
     url = flask.request.form.get('url', '')
