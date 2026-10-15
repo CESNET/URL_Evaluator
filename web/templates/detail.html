@@ -6,6 +6,9 @@
     12. file_mime_type, 13. content_size, 14. threat_label
     15. status, 16. active_last, 17. last_edit-->
 <div class="detail">
+    <div class="buttons top-buttons">
+        <button class="back-btn btn-style" onclick="location.href='{{ url_for('list_all', show=show)}}'">Back</button>
+    </div>
     <div class="wrap">
         <div class="header-wrap">
             {% if url["status"] == 'active' %}
