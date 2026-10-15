@@ -406,6 +406,11 @@
                             <td>SHA-256</td>
                             <td class="mono">{{ e.sha256 }}</td>
                         </tr>
+                        {% set report_url = (ha and ha.sample_url) or ('https://hybrid-analysis.com/sample/' ~ e.sha256) %}
+                        <tr>
+                            <td>Report</td>
+                            <td class="mono"><a class="link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
+                        </tr>
                         {% if not ha %}
                         <tr>
                             <td>Hybrid Analysis</td>
@@ -447,11 +452,6 @@
                                 <a class="sandbox-report" href="{{ ha.sample_url }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
                                 {% endif %}
                             </td>
-                        </tr>
-                        {% set report_url = ha.sample_url or ('https://hybrid-analysis.com/sample/' ~ e.sha256) %}
-                        <tr>
-                            <td>Report</td>
-                            <td class="mono"><a class="link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
                         </tr>
                         {% if ov.vx_family %}
                         <tr>
