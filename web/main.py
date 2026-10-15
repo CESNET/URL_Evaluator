@@ -177,6 +177,16 @@ def get_ip(url):
         return ""
 
 
+# When the newest downloaded content of a URL was last looked up on Hybrid
+# Analysis (same content ordering as the "sandbox" filter); NULL when never.
+HA_CHECKED_SQL = (
+    "(SELECT CASE WHEN json_valid(c.sandbox_info) "
+    "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.checked_at') END "
+    "FROM download_observations d JOIN content c ON c.id = d.content_id "
+    "WHERE d.url = urls.url ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1)"
+)
+
+
 def parse_filters():
     parsed_filters = " WHERE url NOT NULL"
     for param, value in filter_params.items():
@@ -236,7 +246,11 @@ def parse_filters():
                 "WHERE d.url = urls.url "
                 f"ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = {sandbox_status[value]}"
             )
-    parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
+    if filter_params['order_key'] == "ha_checked":
+        # URLs never looked up go last in both directions.
+        parsed_filters += f" ORDER BY {HA_CHECKED_SQL} {filter_params['order']} NULLS LAST"
+    else:
+        parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
 
 
@@ -370,7 +384,7 @@ def list_all():
 
     with SQLiteWrapper(config.db_path) as db:
         # get url details
-        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
+        url_list = db.execute(f"SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status, {HA_CHECKED_SQL} AS ha_checked FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
 
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()

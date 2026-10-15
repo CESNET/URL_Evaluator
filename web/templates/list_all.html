@@ -260,6 +260,15 @@
               onclick="location.href='{{ url_for('list_all', show=show, order='desc', key='classification', page=1) }}'"></button>
           </div>
         </th>
+        <th class="ha_checked">
+          <p>HA checked</p>
+          <div class="sort">
+            <button class="up sort-btn {% if order == 'asc' and key == 'ha_checked' %}active{% endif %}"
+              onclick="location.href='{{ url_for('list_all', show=show, order='asc', key='ha_checked', page=1) }}'"></button>
+            <button class="down sort-btn {% if order == 'desc' and key == 'ha_checked' %}active{% endif %}"
+              onclick="location.href='{{ url_for('list_all', show=show, order='desc', key='ha_checked', page=1) }}'"></button>
+          </div>
+        </th>
         <th class="note"></th>
         <th class="reason">
           <p>Reason</p>
@@ -287,6 +296,7 @@
         <td class="classification {{ url[4] }}">
           <p>{{ url[4] }}</p>
         </td>
+        <td class="ha_checked" title="Last Hybrid Analysis lookup of the newest content">{{ url[8]|fmt_ts }}</td>
         <td class="note"> {% if url[6] != "" and url[6] %} <img src="{{ url_for("static", filename="img/note.png" ) }}"
             alt="note" title="{{ url[6] }}"> {% endif %} </td>
         <td class="reason">{{ url[5] }}</td>
