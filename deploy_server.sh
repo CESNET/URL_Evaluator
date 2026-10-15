@@ -13,7 +13,16 @@ done
 
 # 1. Pull kódu z vetvy
 git pull origin feat-content-storage-and-sandbox
-echo "code was pulled"
+echo "code was pulled"\
+
+# Zastavenie služieb pred migráciou, aby počas zálohy a migrácie nezapisovali do DB
+# (znova sa spustia reštartom v kroku 3; pri --gui zostávajú bežať)
+if [ "$GUI_ONLY" -eq 0 ]; then
+    echo "Stopping Supervisor services before migration..."
+    for service in activity_scanner db_cleaner evaluator honeynetasia2evaluator tpot2evaluator warden2evaluator; do
+        supervisorctl stop "$service"
+    done
+fi
 
 ./install/migrate.sh
 
