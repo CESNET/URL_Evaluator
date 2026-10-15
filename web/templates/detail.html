@@ -320,6 +320,26 @@
                             <td>{{ v.file_size|human_bytes }}</td>
                         </tr>
                         {% endif %}
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Content type</td>
+                            <td>
+                                {% set ct = v.content_type %}
+                                {% if ct %}
+                                <span class="content-type-badge {{ ct.severity }}">{{ ct.category_label }}</span>
+                                <span class="sandbox-sep">&middot;</span>{{ ct.description or ct.label }}
+                                <div class="content-type-meta">
+                                    <span title="Magika content type label">{{ ct.label }}</span>
+                                    {%- if ct.mime_type %} &middot; <span class="mono">{{ ct.mime_type }}</span>{% endif %}
+                                    {%- if ct.score is not none %} &middot; confidence {{ (ct.score * 100)|round|int }}%{% endif %}
+                                    &middot; detected by Magika (static, file not executed)
+                                </div>
+                                {% else %}
+                                <span class="derived-none">not classified</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
                         <tr>
                             <td>Sandbox</td>
                             <td>

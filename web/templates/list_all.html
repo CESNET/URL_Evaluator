@@ -127,6 +127,17 @@
         </div>
 
         <div>
+          <label class="filter-label" for="content_type"
+                 title="Type of the downloaded content (any version) detected statically by Magika">Content type:</label>
+          <select name="content_type" id="filter-content-type">
+            <option selected value="">---select---</option>
+            {% for name, (label, severity) in content_type_categories.items() %}
+            <option {% if filter_params["content_type"] == name %} selected {% endif %} value="{{ name }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
           <label class="filter-label" for="scanned_from" title="When activity_scanner last re-polled the URL (UTC)">Last scanned:</label>
           <input class="filter-input" type="date" id="scanned_from" name="scanned_from" title="from (inclusive)"
             {% if filter_params["scanned_from"] %} value="{{ filter_params["scanned_from"] }}" {% endif %}>

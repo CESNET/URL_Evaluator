@@ -25,6 +25,8 @@ import socket
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from common import file_classifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -271,6 +273,60 @@ def resolve_source_ip(url):
 # Database helpers
 # ---------------------------------------------------------------------------
 
+def classification_available(db):
+    """True when the content-type columns exist (migration 008 applied)."""
+    columns = {row[1] for row in db.execute("PRAGMA table_info(content)").fetchall()}
+    return "file_category" in columns
+
+
+def needs_classification(db, content_id):
+    """True when the content row has no content-type classification yet."""
+    if not classification_available(db):
+        return False
+    row = db.execute("SELECT file_category FROM content WHERE id = ?", (content_id,)).fetchone()
+    return bool(row) and row[0] is None
+
+
+def classify_content(db, content_id, data=None, file_path=None):
+    """
+    Detect the content type of a stored payload with Magika and save it on
+    its content row. The payload is classified from `data` when given,
+    otherwise read from `file_path` -- it is never executed.
+
+    Returns the file_classifier result dict, or None when the classification
+    is unavailable (migration not applied, Magika missing, unreadable file).
+    Never raises -- classification must not break content storage.
+    """
+    try:
+        if not classification_available(db):
+            return None
+        if data is not None:
+            result = file_classifier.classify_bytes(data)
+        elif file_path and os.path.isfile(file_path):
+            result = file_classifier.classify_path(file_path)
+        else:
+            logger.warning(f"Content {content_id}: sample file {file_path} is missing, not classified")
+            return None
+        if result is None:
+            return None
+        db.execute(
+            """
+            UPDATE content SET file_category = ?, magika_label = ?, magika_group = ?,
+                               magika_mime = ?, magika_description = ?, magika_score = ?,
+                               magika_model = ?, classified_at = ?
+            WHERE id = ?
+            """,
+            (result["category"], result["label"], result["group"], result["mime_type"],
+             result["description"], result["score"], result["model"],
+             datetime.now(timezone.utc).isoformat(timespec="seconds"), content_id),
+        )
+        logger.debug(f"Content {content_id} classified as {result['label']} ({result['category']})")
+        return result
+    except Exception as e:
+        logger.warning(f"Could not classify content {content_id}: {e}")
+        return None
+
+
 def get_or_create_content(db, content_dir, data, mime_type=None, url=None):
     """
     Insert a content row for `data` (deduplicated by SHA-256) and store the
@@ -286,6 +342,9 @@ def get_or_create_content(db, content_dir, data, mime_type=None, url=None):
         (sha256,)
     ).fetchone()
     if row:
+        # Payload captured before content-type classification existed.
+        if needs_classification(db, row[0]):
+            classify_content(db, row[0], data=data)
         return {
             "id": row[0],
             "sha256": sha256,
@@ -314,6 +373,8 @@ def get_or_create_content(db, content_dir, data, mime_type=None, url=None):
         (sha256, file_path, len(data), mime_type, now),
     )
     row = db.execute("SELECT id FROM content WHERE sha256 = ?", (sha256,)).fetchone()
+    if row:
+        classify_content(db, row[0], data=data)
     return {
         "id": row[0] if row else None,
         "sha256": sha256,
@@ -405,6 +466,8 @@ def get_content_versions(db, url):
             "sha256": "ffee…",
             "file_size": 44851,
             "mime_type": "application/octet-stream",
+            "content_type": {"category": "executable", "label": "elf",
+                             "description": "ELF executable", ...},  # None = not classified
             "first_fetched": "2025-08-15T06:00:11+00:00",
             "last_fetched":  "2025-09-30T06:00:22+00:00",
             "fetch_count": 4,
@@ -416,11 +479,16 @@ def get_content_versions(db, url):
           ...
         ]
     """
+    # Content-type columns exist only after migration 008.
+    type_columns = (
+        "c.file_category, c.magika_label, c.magika_mime, c.magika_description, c.magika_score"
+        if classification_available(db) else "NULL, NULL, NULL, NULL, NULL"
+    )
     rows = db.execute(
-        """
+        f"""
         SELECT d.content_id, d.fetched_at, d.source_ip, d.status_code,
                d.response_headers, d.change_type,
-               c.sha256, c.file_size, c.mime_type, c.file_path
+               c.sha256, c.file_size, c.mime_type, c.file_path, {type_columns}
         FROM download_observations AS d
         LEFT JOIN content AS c ON c.id = d.content_id
         WHERE d.url = ?
@@ -432,7 +500,8 @@ def get_content_versions(db, url):
     versions = []
     for r in rows:
         (content_id, fetched_at, source_ip, status_code, headers_json,
-         change_type, sha256, file_size, mime_type, file_path) = r
+         change_type, sha256, file_size, mime_type, file_path,
+         file_category, magika_label, magika_mime, magika_description, magika_score) = r
         if versions and versions[-1]["content_id"] == content_id:
             v = versions[-1]
             v["last_fetched"] = fetched_at
@@ -456,6 +525,15 @@ def get_content_versions(db, url):
                 "file_size": file_size,
                 "mime_type": mime_type,
                 "file_path": file_path,
+                "content_type": {
+                    "category": file_category,
+                    "category_label": file_classifier.category_info(file_category)["label"],
+                    "severity": file_classifier.category_info(file_category)["severity"],
+                    "label": magika_label,
+                    "mime_type": magika_mime,
+                    "description": magika_description,
+                    "score": magika_score,
+                } if file_category else None,
                 "first_fetched": fetched_at,
                 "last_fetched": fetched_at,
                 "fetch_count": 1,

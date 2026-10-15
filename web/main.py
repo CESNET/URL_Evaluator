@@ -27,6 +27,10 @@ try:
     from common import hybrid_analysis
 except Exception:
     hybrid_analysis = None
+try:
+    from common.file_classifier import CATEGORIES as CONTENT_TYPE_CATEGORIES
+except Exception:
+    CONTENT_TYPE_CATEGORIES = {}
 
 # Global variables
 page = 1
@@ -262,6 +266,15 @@ def parse_filters():
                 "WHERE d.url = urls.url "
                 f"ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = {sandbox_status[value]}"
             )
+        # Filter on the content type detected by Magika: URLs that served
+        # content of the given category in any downloaded version. Only known
+        # category names reach the SQL.
+        if param == "content_type" and value in CONTENT_TYPE_CATEGORIES:
+            parsed_filters += (
+                " AND EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                f"WHERE d.url = urls.url AND c.file_category = '{value}')"
+            )
     if filter_params['order_key'] == "ha_checked":
         # URLs never looked up go last in both directions.
         parsed_filters += f" ORDER BY {HA_CHECKED_SQL} {filter_params['order']} NULLS LAST"
@@ -345,6 +358,8 @@ def list_all():
             filter_sandbox = flask.request.form.get('sandbox', '').strip()
             filter_params["sandbox"] = filter_sandbox
 
+            filter_params["content_type"] = flask.request.form.get('content_type', '').strip()
+
             filter_params["scanned_from"] = flask.request.form.get('scanned_from', '').strip()
             filter_params["scanned_to"] = flask.request.form.get('scanned_to', '').strip()
         except BadRequestKeyError:
@@ -402,7 +417,7 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256", "scanned_from", "scanned_to")
+    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type", "sha256", "scanned_from", "scanned_to")
     filters_active = any(filter_params.get(k) for k in filter_keys)
 
     with SQLiteWrapper(config.db_path) as db:
@@ -418,7 +433,7 @@ def list_all():
         total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, content_type_categories=CONTENT_TYPE_CATEGORIES)
 
 
 class URLDetail:

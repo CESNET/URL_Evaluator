@@ -123,10 +123,21 @@ CREATE TABLE content
     first_seen    TEXT NOT NULL,          -- ISO timestamp of first capture
     sandbox_info  TEXT,                   -- JSON blob with sandbox results (optional)
     vt_stats      TEXT,                   -- JSON blob with VT file stats (optional)
-    threat_label  TEXT
+    threat_label  TEXT,
+    -- Content type detected statically by Magika (common/file_classifier.py,
+    -- the sample is only read, never executed). NULL = not classified yet.
+    file_category      TEXT,              -- coarse class (file_classifier.CATEGORIES), e.g. 'executable', 'script', 'json'
+    magika_label       TEXT,              -- Magika content type label, e.g. 'elf', 'shell', 'json', 'html'
+    magika_group       TEXT,              -- Magika group, e.g. 'executable', 'code', 'archive'
+    magika_mime        TEXT,              -- MIME type detected by Magika
+    magika_description TEXT,              -- human readable type, e.g. 'ELF executable'
+    magika_score       REAL,              -- Magika confidence (0..1)
+    magika_model       TEXT,              -- Magika model name, e.g. 'standard_v3_3'
+    classified_at      TEXT               -- ISO timestamp (UTC) of the classification
 );
 
 CREATE INDEX idx_content_sha256 ON content(sha256);
+CREATE INDEX idx_content_file_category ON content(file_category);
 
 -- One row per *HTTP fetch* of a URL. Metadata that can differ between fetches
 -- of identical content (timestamp, source IP, response headers, status code)
