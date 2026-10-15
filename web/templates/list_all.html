@@ -40,13 +40,13 @@
         <div>
           <label class="filter-label" for="find-url">URL</label>
           <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address" {%if
-            filter_params["url"] %} value="{{filter_params[" url"]}}" {% endif %}>
+            filter_params["url"] %} value="{{filter_params["url"]}}" {% endif %}>
         </div><!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-hash">Hash</label>
           <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash" {%if
-            filter_params["hash"] %} value="{{filter_params[" hash"]}}" {% endif %}>
+            filter_params["hash"] %} value="{{filter_params["hash"]}}" {% endif %}>
         </div>
         <!-- <button class="btn-style" type="submit">Search</button> -->
 
@@ -59,14 +59,14 @@
         <div>
           <label class="filter-label" for="find-reason">Reason</label>
           <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
-            filter_params["reason"] %} value="{{filter_params[" reason"]}}" {% endif %}>
+            filter_params["reason"] %} value="{{filter_params["reason"]}}" {% endif %}>
         </div>
         <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-note">Note</label>
           <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note" {%if
-            filter_params["note"] %} value="{{filter_params[" note"]}}" {% endif %}>
+            filter_params["note"] %} value="{{filter_params["note"]}}" {% endif %}>
         </div>
 
         <div>
@@ -328,6 +328,15 @@
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     activeSelect();
+
+    // Apply filters as soon as one changes: selects on pick, text fields on
+    // blur (Enter submits the form natively).
+    const filterForm = document.querySelector('#filters form');
+    if (filterForm) {
+      filterForm.querySelectorAll('select, input.filter-input').forEach(function (el) {
+        el.addEventListener('change', function () { filterForm.submit(); });
+      });
+    }
   });
 
 </script>
