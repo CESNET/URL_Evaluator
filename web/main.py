@@ -196,6 +196,18 @@ def parse_filters():
             parsed_filters += f" AND classification='{value}'"
         if param == "url":
             parsed_filters += f" AND url LIKE '%{value}%'"
+        # Quick search: URL substring, or (for a hex-only query of at least 8
+        # characters) a substring of the SHA-256 of any downloaded content.
+        if param == "q":
+            clause = f"url LIKE '%{value}%'"
+            sha256 = value.lower()
+            if len(sha256) >= 8 and re.fullmatch(r"[0-9a-f]+", sha256):
+                clause += (
+                    " OR EXISTS (SELECT 1 FROM download_observations d "
+                    "JOIN content c ON c.id = d.content_id "
+                    f"WHERE d.url = urls.url AND c.sha256 LIKE '%{sha256}%')"
+                )
+            parsed_filters += f" AND ({clause})"
         if param == "hash":
             parsed_filters += f" AND hash LIKE '%{value}%'"
         if param == "note":
@@ -294,7 +306,7 @@ def list_all():
     quick_search = flask.request.args.get('q')
     if quick_search is not None:
         page = 1
-        filter_params["url"] = quick_search.strip()
+        filter_params["q"] = quick_search.strip()
 
     # set filters
     if flask.request.method == 'POST':
@@ -383,7 +395,7 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256")
+    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "sha256")
     filters_active = any(filter_params.get(k) for k in filter_keys)
 
     with SQLiteWrapper(config.db_path) as db:

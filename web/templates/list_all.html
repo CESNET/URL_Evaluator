@@ -20,15 +20,15 @@
 </div>
 {% endif %}
 <div id="list_all">
-  <!-- Quick URL search bar: filters the table by URL substring -->
+  <!-- Quick search bar: filters the table by URL substring or content SHA-256 -->
   <form class="quick-search" action="{{ url_for('list_all', page=1) }}" method="get" role="search">
     {% if show %}<input type="hidden" name="show" value="{{ show }}">{% endif %}
     <span class="quick-search-icon" aria-hidden="true">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
     </span>
-    <input type="text" id="quick-search" name="q" placeholder="Search URL…" autocomplete="off"
-      {% if filter_params["url"] %} value="{{ filter_params["url"] }}" {% endif %}>
-    {% if filter_params["url"] %}
+    <input type="text" id="quick-search" name="q" placeholder="Search URL or content SHA-256…" autocomplete="off"
+      {% if filter_params["q"] %} value="{{ filter_params["q"] }}" {% endif %}>
+    {% if filter_params["q"] %}
     <button type="button" class="quick-search-clear" title="Clear search"
       onclick="window.location.href='{{ url_for('list_all', page=1, show=show, clear_filters=True) }}';">&times;</button>
     {% endif %}
