@@ -67,3 +67,50 @@ def test_content_tab_links_stored_content(web_client, db):
     page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
 
     assert "confirmed identical" in page and "download-link" in page and "Result" not in page
+
+
+def history(db, user="alice"):
+    return [r[0] for r in db.execute("SELECT url FROM user_url_history WHERE user = ? "
+                                     "ORDER BY visited_at DESC", (user,)).fetchall()]
+
+
+def test_detail_visit_is_recorded_for_logged_in_user_only(web_client, db):
+    insert_url(db, URL)
+
+    web_client.get("/detail", query_string={"url": URL}, environ_base=ANALYST)
+    web_client.get("/detail", query_string={"url": URL})  # anonymous
+    web_client.get("/detail", query_string={"url": "http://missing.test/"}, environ_base=ANALYST)
+
+    assert db.execute("SELECT user, url FROM user_url_history").fetchall() == [("alice", URL)]
+
+
+def test_user_url_history_keeps_last_10_distinct_urls(web_client, db):
+    urls = [insert_url(db, f"http://evil.test/{i}.sh") for i in range(12)]
+
+    for url in urls:
+        web_client.get("/detail", query_string={"url": url}, environ_base=ANALYST)
+    web_client.get("/detail", query_string={"url": urls[5]}, environ_base=ANALYST)  # revisit moves it to the top
+
+    assert history(db) == [urls[5]] + [urls[i] for i in (11, 10, 9, 8, 7, 6, 4, 3, 2)]
+
+
+def test_user_url_history_is_deleted_with_the_url(web_client, db):
+    insert_url(db, URL)
+    web_client.get("/detail", query_string={"url": URL}, environ_base=ANALYST)
+
+    db.execute("DELETE FROM urls WHERE url = ?", (URL,))
+
+    assert history(db) == []
+
+
+def test_header_lists_recently_visited_urls(web_client, db):
+    other = insert_url(db, "http://other.test/b.sh")
+    insert_url(db, URL)
+    web_client.get("/detail", query_string={"url": URL}, environ_base=ANALYST)
+
+    analyst = web_client.get("/detail", query_string={"url": other}, environ_base=ANALYST).get_data(as_text=True)
+    anonymous = web_client.get("/detail", query_string={"url": other}).get_data(as_text=True)
+
+    assert "Recent (2)" in analyst
+    assert analyst.index(">http://other.test/b.sh</a>") < analyst.index(f">{URL}</a>")  # newest first
+    assert "recent-urls" not in anonymous

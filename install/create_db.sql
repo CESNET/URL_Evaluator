@@ -212,3 +212,19 @@ CREATE TABLE activity_scanner_progress
     url           TEXT NOT NULL,
     PRIMARY KEY (run_id, url)
 );
+
+-- ============================================================================
+-- Web UI: recently visited URLs per user
+-- ============================================================================
+-- One row per (user, url) with the time of the latest visit of the URL detail
+-- page; the web app keeps only the 10 most recent rows per user. Anonymous
+-- viewers are not recorded.
+CREATE TABLE user_url_history
+(
+    user        TEXT NOT NULL,                                       -- web.main.get_user() identity
+    url         TEXT NOT NULL REFERENCES urls(url) ON DELETE CASCADE,
+    visited_at  TEXT NOT NULL,                                       -- ISO timestamp (UTC) of the latest visit
+    PRIMARY KEY (user, url)
+);
+
+CREATE INDEX idx_user_url_history_user_visited ON user_url_history(user, visited_at);

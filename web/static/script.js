@@ -260,3 +260,10 @@ function copyToClipboard(button) {
         document.body.removeChild(area);
     }
 }
+
+// Close the header "Recent" dropdown when clicking anywhere outside it.
+document.addEventListener("click", function (event) {
+    document.querySelectorAll("details.recent-urls[open]").forEach(function (menu) {
+        if (!menu.contains(event.target)) menu.removeAttribute("open");
+    });
+});

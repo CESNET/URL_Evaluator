@@ -172,6 +172,61 @@ def is_anonymous(user):
     return user == ANONYMOUS_USER
 
 
+# How many recently visited URLs are kept per user (user_url_history).
+RECENT_URLS_LIMIT = 10
+
+
+def record_url_visit(db, user, url):
+    """
+    Remember that `user` opened the detail page of `url` and keep only the
+    RECENT_URLS_LIMIT most recent URLs of that user. Anonymous viewers are
+    not recorded. Best-effort: never breaks the page (e.g. migration 010 not
+    applied yet).
+    """
+    if is_anonymous(user):
+        return
+    try:
+        db.execute("""
+            INSERT INTO user_url_history (user, url, visited_at) VALUES (?, ?, ?)
+            ON CONFLICT (user, url) DO UPDATE SET visited_at = excluded.visited_at
+        """, (user, url, datetime.now(timezone.utc).isoformat(timespec="microseconds")))
+        db.execute("""
+            DELETE FROM user_url_history
+            WHERE user = ? AND url NOT IN (
+                SELECT url FROM user_url_history WHERE user = ?
+                ORDER BY visited_at DESC, rowid DESC LIMIT ?
+            )
+        """, (user, user, RECENT_URLS_LIMIT))
+    except Exception as e:
+        logger.debug(f"Could not record URL visit of {user}: {e}")
+
+
+def recent_urls(db, user):
+    """The user's recently visited URLs, newest first, as (url, visited_at) rows."""
+    if is_anonymous(user):
+        return []
+    try:
+        return db.execute("""
+            SELECT url, visited_at FROM user_url_history WHERE user = ?
+            ORDER BY visited_at DESC, rowid DESC LIMIT ?
+        """, (user, RECENT_URLS_LIMIT)).fetchall()
+    except Exception:
+        return []
+
+
+@app.context_processor
+def inject_recent_urls():
+    """Expose the logged-in user's recently visited URLs to every page (header dropdown)."""
+    user = get_user(flask.request.environ)
+    if is_anonymous(user):
+        return {"recent_urls": []}
+    try:
+        with SQLiteWrapper(config.db_path) as db:
+            return {"recent_urls": recent_urls(db, user)}
+    except Exception:
+        return {"recent_urls": []}
+
+
 def get_ip(url):
     ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
     ip_address = re.findall(ip_pattern, url)
@@ -486,6 +541,7 @@ def detail():
             # Since we are adding a specific API check, we'll return a 404 response.
             return make_response(jsonify({'error': 'URL not found in database'}), 404)
         url_detail = URLDetail(row)
+        record_url_visit(db, user, url)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()

@@ -32,7 +32,19 @@
                 href="{{ url_for('list_all', page=1, show='not_evaluated', clear_filters='True') }}">Not evaluated</a></li>
           </ul>
         </nav>
-        User: {{user}}
+        <div class="header-user">
+          {% if recent_urls %}
+          <details class="recent-urls">
+            <summary>Recent ({{ recent_urls|length }})</summary>
+            <ul>
+              {% for r_url, r_visited in recent_urls %}
+              <li><a href="{{ url_for('detail', url=r_url) }}" title="{{ r_url }} &ndash; visited {{ r_visited|fmt_ts }}">{{ r_url }}</a></li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+          <span>User: {{user}}</span>
+        </div>
       </div>
     </header>
     <section id="body">

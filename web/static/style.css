@@ -210,3 +210,53 @@ p {
 .help-content:hover {
   display: block;
 }
+
+/* Header: user name + "Recent" dropdown of the last visited URL details. */
+.header-user {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.recent-urls {
+  position: relative;
+}
+
+.recent-urls summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.recent-urls summary:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.recent-urls ul {
+  position: absolute;
+  right: 0;
+  z-index: 100;
+  width: 420px;
+  max-width: 90vw;
+  margin: 6px 0 0;
+  padding: 6px 0;
+  list-style: none;
+  background-color: white;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.recent-urls li a {
+  display: block;
+  padding: 6px 12px;
+  overflow: hidden;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recent-urls li a:hover {
+  background-color: #f2f4f7;
+}
