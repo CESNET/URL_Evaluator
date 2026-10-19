@@ -195,6 +195,12 @@ def reset_module_state(monkeypatch):
     # hybrid_analysis: rate-limit back-off and request statistics
     monkeypatch.setattr(hybrid_analysis, "_blocked_until", None)
     hybrid_analysis.reset_request_stats()
+
+    # bin/activity_scanner: stop flag and per-run counters (only when imported;
+    # the rest of the bin/* state is reset by their init())
+    if scanner := sys.modules.get("bin.activity_scanner"):
+        scanner.stop_event.clear()
+        scanner.run_stats.clear()
     yield
     hybrid_analysis.reset_request_stats()
 
@@ -210,6 +216,47 @@ def no_sleep(request, monkeypatch):
         return calls
     monkeypatch.setattr(time, "sleep", lambda seconds: calls.append(seconds))
     return calls
+
+
+# ---------------------------------------------------------------------------
+# bin/* scripts
+# ---------------------------------------------------------------------------
+
+BIN_MODULES = (
+    "evaluator", "activity_scanner", "db_cleaner", "evaluator2misp",
+    "evaluator2misp_bysource", "evaluator2urlhaus", "honeynetasia2evaluator",
+    "tpot2evaluator", "warden2evaluator",
+)
+
+
+@pytest.fixture
+def init_bin(config, db):
+    """
+    Factory: init_bin("db_cleaner", cfg=None) -> the bin/ module after its
+    init() with the test config (evaluator also gets the test `db` connection).
+    """
+    def _init(name, cfg=None):
+        module = importlib.import_module(f"bin.{name}")
+        cfg = cfg or config
+        if name == "evaluator":
+            module.init(cfg, db)
+        else:
+            module.init(cfg)
+        return module
+
+    return _init
+
+
+def _bin_module_fixture(name):
+    @pytest.fixture(name=f"{name}_mod")
+    def _fixture(init_bin):
+        return init_bin(name)
+    return _fixture
+
+
+# evaluator_mod, activity_scanner_mod, db_cleaner_mod, ... (one per BIN_MODULES)
+for _name in BIN_MODULES:
+    globals()[f"{_name}_mod"] = _bin_module_fixture(_name)
 
 
 # ---------------------------------------------------------------------------

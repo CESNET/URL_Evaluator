@@ -20,6 +20,17 @@ from common.db import SQLiteWrapper
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+logger = logging.getLogger("evaluator2misp_bysource.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+
+
+def init(cfg):
+    """Set the module state from `cfg`. Called by __main__ and by tests."""
+    global config
+    config = cfg
+
 
 def extract_ip_domain_port(url):
     """
@@ -269,14 +280,13 @@ if __name__ == '__main__':
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("evaluator2misp_bysource.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)

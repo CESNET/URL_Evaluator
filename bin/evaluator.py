@@ -29,6 +29,67 @@ try:
 except Exception:
     hybrid_analysis = None
 
+logger = logging.getLogger("evaluator.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+db = None
+proxies = {}
+
+# Variables for VT rate limit checks
+vt_minute_quota = 0
+vt_minute_quota_cnt = 0
+vt_minute_quota_timestamp = None
+vt_daily_quota_exceeded = False
+vt_daily_quota_timestamp = None
+
+# Blacklist for evaluating URLs
+blacklist = []
+bl_last_updated = None
+
+# Hybrid Analysis usage statistics (logged periodically by _log_ha_usage)
+ha_url_stats = Counter()
+ha_stats_started = 0.0
+
+running_flag = False
+
+
+def init(cfg, db_conn=None):
+    """
+    Set the module state from `cfg` and open the DB connection (or use the
+    given `db_conn`). Called by __main__ before the main loop and by tests.
+    """
+    global config, db, proxies
+    global vt_minute_quota, vt_minute_quota_cnt, vt_minute_quota_timestamp
+    global vt_daily_quota_exceeded, vt_daily_quota_timestamp
+    global blacklist, bl_last_updated, ha_url_stats, ha_stats_started
+
+    config = cfg
+
+    # Set HTTP proxy
+    proxies = {}
+    if config.http_proxy:
+        proxies = {
+            "http": config.http_proxy,
+            "https": config.http_proxy
+        }
+
+    vt_minute_quota = config.vt_minute_quota
+    vt_minute_quota_cnt = 0
+    vt_minute_quota_timestamp = datetime.now(timezone.utc)
+    vt_daily_quota_exceeded = False
+    vt_daily_quota_timestamp = datetime.now(timezone.utc)
+
+    blacklist = []
+    bl_last_updated = None
+
+    ha_url_stats = Counter()
+    ha_stats_started = time.monotonic()
+    if hybrid_analysis is not None:
+        hybrid_analysis.reset_request_stats()
+
+    db = db_conn if db_conn is not None else SQLiteWrapper(config.db_path)
+
 
 def vt_stats_analysis(stats):
     """
@@ -491,6 +552,51 @@ def evaluate_url(url):
     return result
 
 
+def process_url(url):
+    """
+    Evaluate one URL and store the result: update its `urls` row, record the
+    decision in classification_history and, when it is malicious, mark the
+    source URLs it was downloaded from as malicious too (back-propagation).
+    Returns the evaluation result, or None when the URL was deleted by the
+    domain threshold.
+    """
+    if not (result := evaluate_url(url)):
+        return None
+    logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
+
+    # Update DB record
+    items = list(result.items())
+    set_clause = ", ".join([f"{k} = ?" for k, _ in items])
+    params = tuple(v for _, v in items) + (url,)
+    db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
+
+    # Record the decision in the classification history (skip when the URL
+    # could not be fully evaluated yet and will be retried later – there is
+    # no new classification decision to log in that case).
+    if result.get("evaluated") == "yes":
+        db.record_classification(
+            url,
+            result["classification"],
+            reason=result.get("classification_reason"),
+            actor="evaluator"
+        )
+
+    # If the URL was classified as malicious, mark all source URLs that led to it as malicious
+    if result["classification"] == "malicious":
+        rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
+        if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
+            db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+            for row in rows:
+                db.record_classification(
+                    row[0],
+                    "malicious",
+                    reason="Downloading from malicious URL",
+                    actor="evaluator-backprop"
+                )
+            logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
+    return result
+
+
 def sigint_handler(signum, frame):
     global running_flag
     logger.info("Signal {} received, going to stop".format({signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM", signal.SIGABRT: "SIGABRT"}.get(signum, signum)))
@@ -508,14 +614,13 @@ if __name__ == "__main__":
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("evaluator.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        cfg = Config(args.config)
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
@@ -525,33 +630,8 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigint_handler)
     signal.signal(signal.SIGABRT, sigint_handler)
 
-    # Set HTTP proxy
-    proxies = {}
-    if config.http_proxy:
-        proxies = {
-            "http": config.http_proxy,
-            "https": config.http_proxy
-        }
-
-    # Variables for VT rate limit checks
-    vt_minute_quota = config.vt_minute_quota
-    vt_minute_quota_cnt = 0
-    vt_minute_quota_timestamp = datetime.now(timezone.utc)
-    vt_daily_quota_exceeded = False
-    vt_daily_quota_timestamp = datetime.now(timezone.utc)
-
-    # Blacklist for evaluating URLs
-    blacklist = []
-    bl_last_updated = None
-
-    # Hybrid Analysis usage statistics (logged periodically by _log_ha_usage)
-    ha_url_stats = Counter()
-    ha_stats_started = time.monotonic()
-    if hybrid_analysis is not None:
-        hybrid_analysis.reset_request_stats()
-
-    # Open DB connection
-    db = SQLiteWrapper(config.db_path)
+    # Set module state (proxy, VT quotas, blacklist, HA stats) and open DB connection
+    init(cfg)
 
     logger.info("Started")
     running_flag = True
@@ -566,40 +646,7 @@ if __name__ == "__main__":
 
         try:
             logger.debug(f"Evaluating {url}")
-            if not (result := evaluate_url(url)):
-                continue
-            logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
-
-            # Update DB record
-            items = list(result.items())
-            set_clause = ", ".join([f"{k} = ?" for k, _ in items])
-            params = tuple(v for _, v in items) + (url,)
-            db.execute(f"UPDATE urls SET {set_clause} WHERE url = ?", params)
-
-            # Record the decision in the classification history (skip when the URL
-            # could not be fully evaluated yet and will be retried later – there is
-            # no new classification decision to log in that case).
-            if result.get("evaluated") == "yes":
-                db.record_classification(
-                    url,
-                    result["classification"],
-                    reason=result.get("classification_reason"),
-                    actor="evaluator"
-                )
-
-            # If the URL was classified as malicious, mark all source URLs that led to it as malicious
-            if result["classification"] == "malicious":
-                rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-                if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
-                    db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
-                    for row in rows:
-                        db.record_classification(
-                            row[0],
-                            "malicious",
-                            reason="Downloading from malicious URL",
-                            actor="evaluator-backprop"
-                        )
-                    logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
+            process_url(url)
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
 

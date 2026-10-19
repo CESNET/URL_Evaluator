@@ -26,6 +26,27 @@ try:
 except Exception:
     hybrid_analysis = None
 
+logger = logging.getLogger("activity_status.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+proxies = {}
+
+
+def init(cfg):
+    """Set the module state (config, HTTP proxy) from `cfg`. Called by __main__ and by tests."""
+    global config, proxies
+    config = cfg
+
+    # Set HTTP proxy
+    proxies = {}
+    if config.http_proxy:
+        proxies = {
+            "http": config.http_proxy,
+            "https": config.http_proxy
+        }
+
+
 # Per-run counters shared by the worker threads (reset by activity_scanner()).
 run_stats = Counter()
 run_stats_lock = threading.Lock()
@@ -290,25 +311,16 @@ if __name__ == '__main__':
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("activity_status.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
-    # Load config
+    # Load config (also sets the HTTP proxy)
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
-
-    # Set HTTP proxy
-    proxies = {}
-    if config.http_proxy:
-        proxies = {
-            "http": config.http_proxy,
-            "https": config.http_proxy
-        }
 
     # Start scheduler
     scheduler = BlockingScheduler(timezone=config.scheduler["timezone"])
