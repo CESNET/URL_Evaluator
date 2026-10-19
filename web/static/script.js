@@ -230,3 +230,33 @@ function toggleHelp(element) {
     }
 }
 
+
+// Copy the button's data-copy value; the clipboard API needs HTTPS, so fall
+// back to execCommand on plain HTTP deployments.
+function copyToClipboard(button) {
+    var text = button.getAttribute("data-copy");
+    var title = button.title;
+    var done = function () {
+        button.classList.add("copied");
+        button.title = "Copied";
+        setTimeout(function () {
+            button.classList.remove("copied");
+            button.title = title;
+        }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done);
+        return;
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try {
+        if (document.execCommand("copy")) done();
+    } finally {
+        document.body.removeChild(area);
+    }
+}

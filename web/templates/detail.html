@@ -444,12 +444,17 @@
                     <tbody>
                         <tr>
                             <td>SHA-256</td>
-                            <td class="mono">{{ e.sha256 }}</td>
+                            <td class="mono">
+                                {{ e.sha256 }}
+                                <button type="button" class="copy-btn" data-copy="{{ e.sha256 }}" onclick="copyToClipboard(this)" title="Copy SHA-256" aria-label="Copy SHA-256">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                                </button>
+                            </td>
                         </tr>
                         {% set report_url = (ha and ha.sample_url) or ('https://hybrid-analysis.com/sample/' ~ e.sha256) %}
                         <tr>
                             <td>Report</td>
-                            <td class="mono"><a class="link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
+                            <td class="mono"><a class="report-link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
                         </tr>
                         {% if not ha %}
                         <tr>
@@ -540,18 +545,6 @@
                                         {% endfor %}
                                     </tbody>
                                 </table>
-                            </td>
-                        </tr>
-                        {% endif %}
-                        {% if ha.api_limits %}
-                        <tr>
-                            <td>API limits</td>
-                            <td class="headers mono">
-                                {% if ha.api_limits is mapping %}
-                                    {% for k, val in ha.api_limits.items() %}
-                                    <div><span class="header-key">{{ k }}:</span> {{ val|tojson }}</div>
-                                    {% endfor %}
-                                {% else %}{{ ha.api_limits }}{% endif %}
                             </td>
                         </tr>
                         {% endif %}

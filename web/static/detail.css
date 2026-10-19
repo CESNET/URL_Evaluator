@@ -757,3 +757,34 @@
 .detail .flash.success { color: #067647; background-color: #ecfdf3; border-color: #abefc6; }
 .detail .flash.info    { color: #175cd3; background-color: #eff8ff; border-color: #b2ddff; }
 .detail .flash.error   { color: #b42318; background-color: #fef3f2; border-color: #fecdca; }
+
+/* Sandbox tab: external Hybrid Analysis report link and copy-hash button. */
+.detail .report-link {
+    color: #0b5ed7;
+    text-decoration: underline;
+    word-break: break-all;
+}
+
+.detail .report-link:hover {
+    color: #084298;
+}
+
+.detail .copy-btn {
+    margin-left: 6px;
+    padding: 2px 4px;
+    vertical-align: middle;
+    color: #667085;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.detail .copy-btn:hover {
+    color: #0b5ed7;
+    border-color: #d0d5dd;
+}
+
+.detail .copy-btn.copied {
+    color: #067647;
+}
