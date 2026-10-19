@@ -25,7 +25,7 @@ from common.db import SQLiteWrapper  # noqa: E402
 from common import content_store, file_classifier  # noqa: E402
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Classify the content type of stored samples with Magika (never executes them)."
     )
@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--all', action='store_true',
                         help='Re-classify every sample, not only the unclassified ones')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
