@@ -16,6 +16,11 @@ def observations(db, url):
                       "WHERE url = ? ORDER BY id", (url,)).fetchall()
 
 
+def fetch_errors(db, url):
+    return [r[0] for r in db.execute("SELECT fetch_error FROM download_observations "
+                                     "WHERE url = ? ORDER BY id", (url,)).fetchall()]
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("body, content_type, category, label", [
     (load_bytes("samples", "dropper.sh"), "text/x-shellscript", "script", "shell"),
@@ -50,6 +55,7 @@ def test_http_error_is_recorded_without_content(evaluator_mod, httpserver, exter
     evaluator_mod.process_url(url)
 
     assert observations(db, url) == [(404, "unavailable", None)]
+    assert fetch_errors(db, url) == ["http_error"]
     assert db.execute("SELECT COUNT(*) FROM content").fetchone()[0] == 0
 
 
@@ -61,6 +67,7 @@ def test_oversized_payload_is_not_stored(evaluator_mod, httpserver, external_api
     evaluator_mod.process_url(url)
 
     assert observations(db, url) == [(200, "unavailable", None)]
+    assert fetch_errors(db, url) == ["oversized"]
     assert db.execute("SELECT COUNT(*) FROM content").fetchone()[0] == 0
     # content_size / 'File too large' are not stored: see the xfail test_too_large_content
 
@@ -74,6 +81,9 @@ def test_redirect_loop_is_unreachable(evaluator_mod, httpserver, external_apis, 
     result = evaluator_mod.process_url(url)
 
     assert (result["classification"], result["classification_reason"]) == ("unreachable", "Connection error")
+    # the failed attempt is still logged, with the reason, for the Content tab
+    assert observations(db, url) == [(None, "unavailable", None)]
+    assert fetch_errors(db, url) == ["too_many_redirects"]
 
 
 def test_activity_scanner_detects_content_change_and_inactivity(
@@ -95,6 +105,7 @@ def test_activity_scanner_detects_content_change_and_inactivity(
 
     changes = [row[1] for row in observations(db, url)]
     assert changes == ["initial", "confirmed", "content_changed", "unavailable"]
+    assert fetch_errors(db, url) == [None, None, None, "http_error"]
     assert db.execute("SELECT COUNT(*) FROM content").fetchone()[0] == 2
     # every run finished and its progress was cleared
     assert db.execute("SELECT COUNT(*) FROM activity_scanner_runs WHERE finished_at IS NULL").fetchone()[0] == 0

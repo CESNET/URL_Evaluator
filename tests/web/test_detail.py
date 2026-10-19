@@ -1,4 +1,4 @@
-from tests.factories import insert_classification, insert_url
+from tests.factories import insert_classification, insert_content, insert_download, insert_url
 
 ANALYST = {"REMOTE_USER": "alice"}
 URL = "http://evil.test/a.sh"
@@ -48,3 +48,22 @@ def test_analyst_reevaluates_url(web_client, db):
 
     assert response.status_code == 302
     assert db.execute("SELECT evaluated FROM urls").fetchone() == ("no",)
+
+
+def test_content_tab_explains_missing_content(web_client, db):
+    insert_url(db, URL)
+    insert_download(db, URL, status_code=None, response_headers=None, fetch_error="timeout")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert "Connection timed out" in page and "no content" in page
+    assert "confirmed identical" not in page and "Downloaded from" not in page
+
+
+def test_content_tab_links_stored_content(web_client, db):
+    insert_url(db, URL)
+    insert_download(db, URL, insert_content(db, b"payload"))
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert "confirmed identical" in page and "download-link" in page and "Result" not in page

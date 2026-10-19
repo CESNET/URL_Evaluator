@@ -156,7 +156,8 @@ CREATE TABLE download_observations
     status_code     INTEGER,
     response_headers TEXT,                -- JSON dict of response headers
     change_type     TEXT NOT NULL DEFAULT 'initial'
-                        CHECK (change_type IN ('initial', 'confirmed', 'content_changed', 'unavailable'))
+                        CHECK (change_type IN ('initial', 'confirmed', 'content_changed', 'unavailable')),
+    fetch_error     TEXT                  -- why content_id is NULL (content_store.FETCH_ERRORS key), NULL otherwise
 );
 
 CREATE INDEX idx_download_obs_url        ON download_observations(url);

@@ -42,6 +42,34 @@ def test_record_download_observation_change_types(db):
     assert [r[0] for r in rows] == ["initial", "confirmed", "content_changed", "unavailable"]
 
 
+def test_content_versions_group_failed_fetches_by_reason(db):
+    url = insert_url(db)
+    stored = insert_content(db, b"v1")
+    insert_download(db, url, stored, fetched_at="2026-01-01T00:00:00")
+    insert_download(db, url, fetched_at="2026-01-02T00:00:00", fetch_error="timeout")
+    insert_download(db, url, fetched_at="2026-01-03T00:00:00", fetch_error="timeout")
+    insert_download(db, url, fetched_at="2026-01-04T00:00:00", status_code=404, fetch_error="http_error")
+    insert_download(db, url, fetched_at="2026-01-05T00:00:00", status_code=None)  # recorded before migration 009
+
+    versions = content_store.get_content_versions(db, url)
+
+    assert [(v["content_id"], v["fetch_count"], v["failure"]) for v in versions] == [
+        (stored, 1, None),
+        (None, 2, "Connection timed out"),
+        (None, 1, "Server returned HTTP 404"),
+        (None, 1, "No HTTP response (connection failed or timed out)"),
+    ]
+
+
+def test_fetch_error_is_not_stored_with_content(db):
+    url = insert_url(db)
+    content_id = insert_content(db, b"v1")
+
+    content_store.record_download_observation(db, url, content_id=content_id, fetch_error="timeout")
+
+    assert db.execute("SELECT fetch_error FROM download_observations").fetchone() == (None,)
+
+
 def test_cleanup_orphan_content_keeps_shared_payloads(db, content_dir):
     a, b = insert_url(db, "http://a.test/x"), insert_url(db, "http://b.test/x")
     shared = insert_content(db, b"shared", content_dir=content_dir)

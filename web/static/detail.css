@@ -529,6 +529,22 @@
     text-transform: lowercase;
 }
 
+.detail .badge-no-content {
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #b42318;
+    background-color: #fef3f2;
+    border: 1px solid #fecdca;
+    border-radius: 999px;
+    text-transform: lowercase;
+}
+
+.detail .fetch-failure {
+    font-weight: 600;
+    color: #b42318;
+}
+
 /* Content type detected by Magika; colour by how dangerous the category is. */
 .detail .content-type-badge {
     padding: 2px 10px;

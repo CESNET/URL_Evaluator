@@ -171,7 +171,7 @@ def search_for_nested_urls(content, src_url):
         return
 
 
-def _record_fetch(url, response, content_id=None, fetched_at=None):
+def _record_fetch(url, response, content_id=None, fetched_at=None, fetch_error=None):
     """
     Persist one row of connection metadata for the given HTTP response.
 
@@ -190,6 +190,7 @@ def _record_fetch(url, response, content_id=None, fetched_at=None):
             source_ip=content_store.resolve_source_ip(url),
             status_code=getattr(response, "status_code", None),
             response_headers=dict(getattr(response, "headers", {}) or {}),
+            fetch_error=fetch_error,
         )
     except Exception as e:
         logger.debug(f"Could not record download observation for {url}: {e}")
@@ -274,15 +275,18 @@ def _log_ha_usage_if_ha_stats_interval_minutes_reached(force=False):
 def _store_downloaded_content(url, body, mime_type, fetched_at):
     """
     Deduplicate & persist a downloaded payload to disk and link it to an
-    observation row. Returns the content_id (or None when storage is
-    disabled/unavailable).
+    observation row. Returns (content_id, fetch_error): content_id is None
+    when nothing was stored and fetch_error (a content_store.FETCH_ERRORS key)
+    says why.
     """
     db_conn = globals().get("db")
-    if content_store is None or db_conn is None or not body:
-        return None
+    if content_store is None or db_conn is None:
+        return None, "storage_disabled"
+    if not body:
+        return None, "empty_body"
     content_dir = getattr(config, "content_dir", None)
     if not content_dir:
-        return None
+        return None, "storage_disabled"
     try:
         content_store.ensure_content_dir(content_dir)
         info = content_store.get_or_create_content(
@@ -293,12 +297,12 @@ def _store_downloaded_content(url, body, mime_type, fetched_at):
                 f"Content for {url} ({len(body)} bytes) could not be written to "
                 f"disk – skipping content record, observation will reference no payload"
             )
-            return None
+            return None, "storage_failed"
         _check_hybrid_analysis(db_conn, info.get("id"), info.get("sha256"), url)
-        return info.get("id")
+        return info.get("id"), None
     except Exception as e:
         logger.warning(f"Could not store content for {url}: {e}")
-        return None
+        return None, "storage_failed"
 
 
 def _fetch_and_store_content(url):
@@ -306,8 +310,8 @@ def _fetch_and_store_content(url):
 
     Side effects (all best-effort, never breaking classification):
       - records a download_observation row (timestamp, source IP, status code,
-        response headers) via _record_fetch — both on failure (content_id=None)
-        and on success
+        response headers) via _record_fetch — both on failure (content_id=None
+        plus a fetch_error reason, also for network errors) and on success
       - stores a usable payload deduplicated on disk (keyed by SHA-256) via
         _store_downloaded_content, linking it through content_id
       - when the body is a shell script, extracts nested URLs from it
@@ -317,13 +321,20 @@ def _fetch_and_store_content(url):
     storable body was returned. Raises only on network-level errors.
     """
     fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with requests.get(url, stream=True, proxies=proxies, timeout=10) as response:
+    try:
+        response = requests.get(url, stream=True, proxies=proxies, timeout=10)
+    except requests.exceptions.RequestException as e:
+        # No response at all -- still log the attempt so the Content tab can say why.
+        _record_fetch(url, None, content_id=None, fetched_at=fetched_at,
+                      fetch_error=content_store.fetch_error_from_exception(e) if content_store else None)
+        raise
+    with response:
         if not response.ok:
-            _record_fetch(url, response, content_id=None, fetched_at=fetched_at)
+            _record_fetch(url, response, content_id=None, fetched_at=fetched_at, fetch_error="http_error")
             return None, None, None, None
         content_size = response.headers.get('Content-Length')
         if content_size is not None and int(content_size) / (1024 ** 2) > config.max_file_size:
-            _record_fetch(url, response, content_id=None, fetched_at=fetched_at)
+            _record_fetch(url, response, content_id=None, fetched_at=fetched_at, fetch_error="oversized")
             return None, None, content_size, None
 
         # Determine file type
@@ -343,8 +354,8 @@ def _fetch_and_store_content(url):
             search_for_nested_urls(body, url)
 
         # Persist the raw payload (deduplicated) and log the fetch metadata
-        content_id = _store_downloaded_content(url, body, file_type, fetched_at)
-        _record_fetch(url, response, content_id=content_id, fetched_at=fetched_at)
+        content_id, fetch_error = _store_downloaded_content(url, body, file_type, fetched_at)
+        _record_fetch(url, response, content_id=content_id, fetched_at=fetched_at, fetch_error=fetch_error)
 
         sha1 = hashlib.sha1(body).hexdigest()
         return sha1, body, content_size, file_type

@@ -288,6 +288,7 @@
                     <div class="version-card-title">
                         <h3>Version {{ v.version }}</h3>
                         {% if v.changed %}<span class="badge-changed">content changed</span>{% endif %}
+                        {% if not v.content_id %}<span class="badge-no-content">no content</span>{% endif %}
                     </div>
                     {% if v.status_code %}<span class="version-status">HTTP {{ v.status_code }}</span>{% endif %}
                 </header>
@@ -298,13 +299,27 @@
                             <td>Observed</td>
                             <td>{{ v.first_fetched|fmt_ts }} &rarr; {{ v.last_fetched|fmt_ts }}</td>
                         </tr>
+                        {% if v.content_id %}
                         <tr>
                             <td>Fetch count</td>
                             <td>{{ v.fetch_count }}&times; confirmed identical</td>
                         </tr>
+                        {% else %}
+                        <tr>
+                            <td>Result</td>
+                            <td>
+                                <span class="fetch-failure">{{ v.failure }}</span>
+                                <div class="content-type-meta">Nothing was stored, so there is no file to download or analyse.</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Fetch count</td>
+                            <td>{{ v.fetch_count }}&times; {{ 'attempt' if v.fetch_count == 1 else 'attempts' }} without content</td>
+                        </tr>
+                        {% endif %}
                         {% if v.source_ip %}
                         <tr>
-                            <td>Downloaded from</td>
+                            <td>{{ 'Downloaded from' if v.content_id else 'Host IP' }}</td>
                             <td>{{ v.source_ip }}</td>
                         </tr>
                         {% endif %}
@@ -353,6 +368,8 @@
                                 <span class="sandbox-name">Not analysed on Hybrid Analysis</span>
                                 {% elif ha %}
                                 <span class="sandbox-name">Hybrid Analysis lookup failed ({{ ha.error or ('HTTP ' ~ ha.http_status) }})</span>
+                                {% elif not v.content_id %}
+                                <span class="derived-none">n/a (no content)</span>
                                 {% else %}
                                 <span class="derived-none">not checked</span>
                                 {% endif %}

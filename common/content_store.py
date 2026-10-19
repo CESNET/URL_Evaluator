@@ -25,6 +25,8 @@ import socket
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+import requests
+
 from common import file_classifier
 
 logger = logging.getLogger(__name__)
@@ -279,6 +281,56 @@ def classification_available(db):
     return "file_category" in columns
 
 
+def fetch_error_available(db):
+    """True when download_observations.fetch_error exists (migration 009 applied)."""
+    columns = {row[1] for row in db.execute("PRAGMA table_info(download_observations)").fetchall()}
+    return "fetch_error" in columns
+
+
+# Why a download observation has no content (download_observations.fetch_error)
+# -> text shown on the Content tab.
+FETCH_ERRORS = {
+    "timeout": "Connection timed out",
+    "connection_error": "Connection failed (refused, reset, DNS or TLS error)",
+    "too_many_redirects": "Too many redirects",
+    "request_error": "Request could not be sent (invalid URL or client error)",
+    "http_error": "Server returned an error status",
+    "oversized": "Payload larger than the configured max_file_size, not downloaded",
+    "empty_body": "Server returned an empty body",
+    "body_unreadable": "Response body could not be read",
+    "storage_disabled": "Content storage is disabled (content_dir not configured)",
+    "storage_failed": "Payload was downloaded but could not be stored on disk",
+}
+
+
+def fetch_error_from_exception(exc):
+    """Map a requests exception raised by the fetch to a FETCH_ERRORS key."""
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "timeout"
+    if isinstance(exc, requests.exceptions.TooManyRedirects):
+        return "too_many_redirects"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "connection_error"
+    return "request_error"
+
+
+def describe_fetch_failure(fetch_error, status_code):
+    """
+    Human readable reason why a fetch produced no content. Rows recorded
+    before migration 009 have no fetch_error; the reason is then inferred
+    from the status code.
+    """
+    if fetch_error == "http_error" and status_code:
+        return f"Server returned HTTP {status_code}"
+    if fetch_error in FETCH_ERRORS:
+        return FETCH_ERRORS[fetch_error]
+    if status_code is None:
+        return "No HTTP response (connection failed or timed out)"
+    if not 200 <= status_code < 300:
+        return f"Server returned HTTP {status_code}"
+    return "Response received but no content stored (empty, too large or storage failure)"
+
+
 def needs_classification(db, content_id):
     """True when the content row has no content-type classification yet."""
     if not classification_available(db):
@@ -408,9 +460,13 @@ def record_download_observation(
     status_code=None,
     response_headers=None,
     change_type=None,
+    fetch_error=None,
 ):
     """
     Append one row to ``download_observations``.
+
+    `fetch_error` (a FETCH_ERRORS key) records why the fetch produced no
+    content; it is ignored when content_id is set or migration 009 is missing.
 
     When `change_type` is not supplied it is derived automatically:
       * 'content_changed' if the previous successful fetch returned a
@@ -436,13 +492,14 @@ def record_download_observation(
             else:
                 change_type = "content_changed"
 
+    columns = ["url", "content_id", "fetched_at", "source_ip", "status_code", "response_headers", "change_type"]
+    values = [url, content_id, fetched_at, source_ip, status_code, response_headers, change_type]
+    if content_id is None and fetch_error and fetch_error_available(db):
+        columns.append("fetch_error")
+        values.append(fetch_error)
     db.execute(
-        """
-        INSERT INTO download_observations
-            (url, content_id, fetched_at, source_ip, status_code, response_headers, change_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (url, content_id, fetched_at, source_ip, status_code, response_headers, change_type),
+        f"INSERT INTO download_observations ({', '.join(columns)}) VALUES ({', '.join('?' * len(values))})",
+        values,
     )
     return db.cursor.lastrowid
 
@@ -475,6 +532,7 @@ def get_content_versions(db, url):
             "status_code": 200,
             "response_headers": {...},
             "changed": False,
+            "failure": None,   # why no content was stored, e.g. "Connection timed out"
           },
           ...
         ]
@@ -484,10 +542,12 @@ def get_content_versions(db, url):
         "c.file_category, c.magika_label, c.magika_mime, c.magika_description, c.magika_score"
         if classification_available(db) else "NULL, NULL, NULL, NULL, NULL"
     )
+    # fetch_error exists only after migration 009.
+    fetch_error_column = "d.fetch_error" if fetch_error_available(db) else "NULL"
     rows = db.execute(
         f"""
         SELECT d.content_id, d.fetched_at, d.source_ip, d.status_code,
-               d.response_headers, d.change_type,
+               d.response_headers, d.change_type, {fetch_error_column},
                c.sha256, c.file_size, c.mime_type, c.file_path, {type_columns}
         FROM download_observations AS d
         LEFT JOIN content AS c ON c.id = d.content_id
@@ -500,9 +560,12 @@ def get_content_versions(db, url):
     versions = []
     for r in rows:
         (content_id, fetched_at, source_ip, status_code, headers_json,
-         change_type, sha256, file_size, mime_type, file_path,
+         change_type, fetch_error, sha256, file_size, mime_type, file_path,
          file_category, magika_label, magika_mime, magika_description, magika_score) = r
-        if versions and versions[-1]["content_id"] == content_id:
+        # Stored content groups by content_id; failed fetches group only with
+        # consecutive failures of the same kind (same status and reason).
+        failure = None if content_id is not None else describe_fetch_failure(fetch_error, status_code)
+        if versions and versions[-1]["content_id"] == content_id and versions[-1]["failure"] == failure:
             v = versions[-1]
             v["last_fetched"] = fetched_at
             v["fetch_count"] += 1
@@ -541,6 +604,7 @@ def get_content_versions(db, url):
                 "status_code": status_code,
                 "response_headers": headers,
                 "changed": change_type == "content_changed",
+                "failure": failure,
             })
     return versions
 
