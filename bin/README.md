@@ -13,3 +13,21 @@
 Before each URL, the main loop calls `_log_ha_usage_if_ha_stats_interval_minutes_reached()`. Every `ha_stats_interval_minutes` (default 10) it logs Hybrid Analysis usage: hashes checked, request rate and HTTP 429 hits. Then it resets the counters.
 
 If the VT quota runs out, the URL is set to `evaluated=no, eval_later=yes` and retried after the daily quota resets.
+
+## activity_scanner.py – scan pipeline (`activity_scanner` → `_run` → `thread_func`)
+
+Runs on the cron schedule `scheduler.activity_scanner`. It runs immediately on start when `--now` is passed or the previous run was interrupted. Only one run can be in progress at a time (`run_lock`).
+
+1. **Start or resume a run**: if the last row in `activity_scanner_runs` has no `finished_at`, the run is resumed. Otherwise a new run is created.
+2. **Load URLs**: all URLs in `urls` that are not yet in `activity_scanner_progress` for this run.
+3. **Split into threads**: one worker thread per 1000 URLs.
+4. **Per URL** (`thread_func`):
+   1. **Validity**: `is_valid()`. Invalid URLs are marked processed and skipped.
+   2. **Fetch**: GET with a 10 s timeout. An OK response means `active`. An error status, connection error or timeout means `inactive`.
+   3. **Store content** (`_record_daily_fetch`): the body is deduplicated into `content_dir`, followed by a Hybrid Analysis SHA-256 check (`check_content_outcome`). A `download_observation` row is always written, with or without a body.
+   4. **Update `urls`**: `status`, `last_scanned`, and `last_active` (only when active). Sets `status_changed = 'yes'` when the status flips.
+   5. **Mark processed**: the URL is added to `activity_scanner_progress`.
+5. **Finish**: once all threads have joined, the run gets `finished_at` and its progress rows are deleted. If the run was stopped with URLs left, it stays open and is resumed on the next start.
+6. **Summary** (`_log_run_summary`): logs URLs updated, active, inactive and status-changed, plus Hybrid Analysis usage. It warns on HTTP 429 or when the peak reaches 200 requests/min.
+
+On SIGINT, SIGTERM or SIGABRT, `stop_event` is set: each worker finishes its current URL and stops, and the remaining URLs are left for the resumed run.
