@@ -572,6 +572,7 @@ def process_url(url):
     domain threshold.
     """
     if not (result := evaluate_url(url)):
+        logger.info(f"URL {url} was not classified, it was deleted by the domain threshold")
         return None
     logger.info(f"URL {url} was classified as {result['classification']}, reason: {result['classification_reason']}")
 
