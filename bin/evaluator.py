@@ -552,6 +552,15 @@ def evaluate_url(url):
     return result
 
 
+def next_url():
+    """
+    Return the next URL waiting for evaluation, or None. While the VT daily
+    quota is exceeded, URLs postponed until the quota reset are skipped.
+    """
+    row = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
+    return row[0] if row else None
+
+
 def process_url(url):
     """
     Evaluate one URL and store the result: update its `urls` row, record the
@@ -637,12 +646,10 @@ if __name__ == "__main__":
     running_flag = True
     while running_flag:
         _log_ha_usage()
-        url = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
-        if not url:
+        if not (url := next_url()):
             logger.debug("No URLs to check, sleeping for 10 seconds")
             time.sleep(10)
             continue
-        url = url[0]
 
         try:
             logger.debug(f"Evaluating {url}")

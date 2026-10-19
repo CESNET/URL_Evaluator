@@ -93,3 +93,11 @@ def insert_classification(db, url, classification="malicious", reason=None, acto
     values = {"url": url, "classification": classification, "reason": reason, "actor": actor}
     values.update(overrides)
     return _insert(db, "classification_history", values).lastrowid
+
+
+def insert_sandbox_submission(db, content_id, sha256, sandbox_name="hybrid_analysis", status="pending", **overrides):
+    """Insert a `sandbox_submissions` row; returns its id."""
+    values = {"content_id": content_id, "sha256": sha256, "sandbox_name": sandbox_name,
+              "submitted_at": NOW, "submitted_by": "alice", "status": status}
+    values.update(overrides)
+    return _insert(db, "sandbox_submissions", values).lastrowid
