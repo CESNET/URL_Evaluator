@@ -1,0 +1,10 @@
+{
+  "data": {
+    "type": "url",
+    "id": "aHR0cDovL2V2aWwudGVzdC9hLnNo",
+    "attributes": {
+      "last_analysis_stats": {"malicious": 12, "suspicious": 1, "undetected": 20, "harmless": 7, "timeout": 0},
+      "popular_threat_classification": {"suggested_threat_label": "trojan.mirai/gafgyt"}
+    }
+  }
+}

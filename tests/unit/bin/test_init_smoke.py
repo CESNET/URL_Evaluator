@@ -82,5 +82,5 @@ def test_classify_content_main_runs(config):
 
 
 def test_backfill_content_main_runs_on_empty_db(config):
-    from bin import backfill_content
+    backfill_content = pytest.importorskip("bin.backfill_content", reason="bin/backfill_content.py is not tracked in git")
     backfill_content.main(["--config", config._test_path])

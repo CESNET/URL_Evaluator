@@ -1,0 +1,6 @@
+################################################################
+# abuse.ch URLhaus Database Dump (CSV - online URLs only)      #
+# Test fixture, not real data                                  #
+################################################################
+http://blacklisted.test/bins/x86
+http://192.0.2.10/mozi.m

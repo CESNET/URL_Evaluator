@@ -10,6 +10,7 @@ Mocked: external HTTP APIs (responses), PyMISP (MagicMock), warden_client
 
 import importlib
 import os
+import socket
 import sys
 import time
 
@@ -55,11 +56,6 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(pytest.mark.enable_socket)  # lift the localhost-only guard
             else:
                 item.add_marker(skip_live)
-
-
-def data_path(*parts):
-    """Absolute path of a file in tests/data/."""
-    return os.path.join(DATA_DIR, *parts)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +132,27 @@ def http_mock():
         mock.add_passthru("http://localhost")
         mock.add_passthru("http://127.0.0.1")
         yield mock
+
+
+FAKE_IP = "192.0.2.1"  # TEST-NET-1, never routable
+
+
+@pytest.fixture(autouse=True)
+def fake_dns(monkeypatch):
+    """
+    socket.gethostbyname (content_store.resolve_source_ip) answers FAKE_IP for
+    every host except localhost, so tests never send real DNS queries.
+    Returns the list of resolved host names.
+    """
+    calls = []
+    real = socket.gethostbyname
+
+    def _gethostbyname(host):
+        calls.append(host)
+        return real(host) if host in ("localhost", "127.0.0.1") else FAKE_IP
+
+    monkeypatch.setattr(socket, "gethostbyname", _gethostbyname)
+    return calls
 
 
 # ---------------------------------------------------------------------------
