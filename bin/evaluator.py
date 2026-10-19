@@ -47,7 +47,7 @@ vt_daily_quota_timestamp = None
 blacklist = []
 bl_last_updated = None
 
-# Hybrid Analysis usage statistics (logged periodically by _log_ha_usage)
+# Hybrid Analysis usage statistics (logged periodically by _log_ha_usage_if_ha_stats_interval_minutes_reached)
 ha_url_stats = Counter()
 ha_stats_started = 0.0
 
@@ -236,11 +236,13 @@ def _check_hybrid_analysis(db_conn, content_id, sha256, url=None):
         logger.warning(f"Hybrid Analysis lookup for content of {url} failed (HTTP {last_status})")
 
 
-def _log_ha_usage(force=False):
+def _log_ha_usage_if_ha_stats_interval_minutes_reached(force=False):
     """
-    Periodically (every `ha_stats_interval_minutes`, default 10) log how many
-    URLs had their content hash checked on Hybrid Analysis and the API request
-    rate, then start a new window. `force` logs immediately (on shutdown).
+    Safe to call on every loop iteration: returns immediately unless the
+    current stats window (`ha_stats_interval_minutes`, default 10) has elapsed.
+    When it has, log how many URLs had their content hash checked on Hybrid
+    Analysis and the API request rate, then start a new window.
+    `force` logs immediately regardless of the window (on shutdown).
     """
     global ha_stats_started
     if hybrid_analysis is None:
@@ -645,7 +647,7 @@ if __name__ == "__main__":
     logger.info("Started")
     running_flag = True
     while running_flag:
-        _log_ha_usage()
+        _log_ha_usage_if_ha_stats_interval_minutes_reached()
         if not (url := next_url()):
             logger.debug("No URLs to check, sleeping for 10 seconds")
             time.sleep(10)
@@ -657,6 +659,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
 
-    _log_ha_usage(force=True)
+    _log_ha_usage_if_ha_stats_interval_minutes_reached(force=True)
     db.close()
     logger.info("Stopped")
