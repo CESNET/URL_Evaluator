@@ -106,7 +106,8 @@ ha_key: "!!! CHANGE THIS !!!"
 ha_recheck_hours: 12 # minimal age of a stored result before the hash is queried again
 ha_stats_interval_minutes: 10 # evaluator logs Hybrid Analysis usage (requests/min, 429s) this often
 ha_environment_id: 330 # default environment offered for web UI submissions (330 = Linux Ubuntu 24.04 64 bit)
-
+# activity_scanner fetches the report of a web UI submission this many minutes after it, then leaves it to the daily run
+ha_fetch_schedule_minutes: [10, 20, 30] 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"
 

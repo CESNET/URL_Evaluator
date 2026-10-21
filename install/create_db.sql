@@ -184,13 +184,17 @@ CREATE TABLE sandbox_submissions
     status        TEXT NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending', 'running', 'done', 'failed', 'error')),
     verdict       TEXT,                             -- e.g. 'malicious', 'clean', ...
-    report_url    TEXT                              -- external report link (empty => placeholder)
+    report_url    TEXT,                             -- external report link (empty => placeholder)
+    fetch_attempts INTEGER NOT NULL DEFAULT 0,      -- scheduled result GETs already sent (10/20/30 min)
+    next_fetch_at TEXT,                             -- ISO timestamp (UTC) of the next scheduled GET, NULL = none
+    last_fetch_at TEXT                              -- ISO timestamp (UTC) of the last result GET
 );
 
 CREATE INDEX idx_sandbox_subm_content    ON sandbox_submissions(content_id);
 CREATE INDEX idx_sandbox_subm_sha256     ON sandbox_submissions(sha256);
 CREATE INDEX idx_sandbox_subm_name       ON sandbox_submissions(sandbox_name);
 CREATE INDEX idx_sandbox_subm_submitted  ON sandbox_submissions(submitted_at);
+CREATE INDEX idx_sandbox_subm_next_fetch ON sandbox_submissions(next_fetch_at);
 
 -- ============================================================================
 -- activity_scanner run progress

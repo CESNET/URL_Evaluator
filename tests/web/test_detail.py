@@ -1,4 +1,4 @@
-from tests.factories import insert_classification, insert_content, insert_download, insert_url
+from tests.factories import insert_classification, insert_content, insert_download, insert_sandbox_submission, insert_url
 
 ANALYST = {"REMOTE_USER": "alice"}
 URL = "http://evil.test/a.sh"
@@ -114,3 +114,30 @@ def test_header_lists_recently_visited_urls(web_client, db):
     assert "Recent (2)" in analyst
     assert analyst.index(">http://other.test/b.sh</a>") < analyst.index(f">{URL}</a>")  # newest first
     assert "recent-urls" not in anonymous
+
+
+def test_sandbox_tab_shows_scheduled_result_fetch(web_client, db):
+    insert_url(db, URL)
+    content_id = insert_content(db)
+    sha256 = db.execute("SELECT sha256 FROM content WHERE id = ?", (content_id,)).fetchone()[0]
+    insert_download(db, URL, content_id=content_id)
+    insert_sandbox_submission(db, content_id, sha256, fetch_attempts=1, next_fetch_at="2026-01-01T12:20:00+00:00",
+                              last_fetch_at="2026-01-01T12:10:00+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "sandbox"}).get_data(as_text=True)
+
+    assert "waiting for report" in page
+    assert "scheduled fetch 2/3" in page and "2026-01-01 12:20:00 UTC" in page
+
+
+def test_sandbox_tab_hands_over_to_daily_run_after_last_fetch(web_client, db):
+    insert_url(db, URL)
+    content_id = insert_content(db)
+    sha256 = db.execute("SELECT sha256 FROM content WHERE id = ?", (content_id,)).fetchone()[0]
+    insert_download(db, URL, content_id=content_id)
+    insert_sandbox_submission(db, content_id, sha256, fetch_attempts=3, next_fetch_at=None,
+                              last_fetch_at="2026-01-01T12:30:00+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "sandbox"}).get_data(as_text=True)
+
+    assert "No report after the 3 scheduled fetches" in page and "next daily activity scan" in page

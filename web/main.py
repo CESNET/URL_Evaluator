@@ -627,6 +627,17 @@ def detail():
             if submission and is_anonymous(user):
                 submission["submitted_by"] = "analyst"
             submission_active = bool(submission and submission["status"] in ("pending", "running", "done"))
+            # Scheduled result fetches (10/20/30 min after submission, run by activity_scanner)
+            fetch_plan = None
+            if submission and submission["status"] in ("pending", "running"):
+                schedule = hybrid_analysis.fetch_schedule(config)
+                fetch_plan = {
+                    "waiting": bool(submission.get("next_fetch_at")),
+                    "next_fetch_at": submission.get("next_fetch_at"),
+                    "attempt": (submission.get("fetch_attempts") or 0) + 1,
+                    "attempts_total": len(schedule),
+                    "schedule": ", ".join(str(m) for m in schedule),
+                }
             sandbox_entries.append({
                 "version": v["version"],
                 "content_id": cid,
@@ -635,6 +646,7 @@ def detail():
                 "ha_response_pretty": json.dumps(ha.get("response"), indent=2) if ha else None,
                 "submission": submission,
                 "ha_submission": ha_submission,
+                "fetch_plan": fetch_plan,
                 "can_submit": bool(ha_submit_enabled and hybrid_analysis.is_submittable(ha)
                                    and not submission_active
                                    and resolve_content_file(v.get("file_path"))),
@@ -868,7 +880,8 @@ def download_content(content_id):
 
 # Message shown after a submission attempt: outcome -> (category, text).
 SUBMIT_MESSAGES = {
-    "submitted": ("success", "Sample submitted to Hybrid Analysis. The report appears after the next hash lookup."),
+    "submitted": ("success", "Sample submitted to Hybrid Analysis. Its report is fetched automatically 10, 20 and 30 minutes "
+                             "after the submission; if it is not ready by then, the next daily activity scan fetches it."),
     "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
     "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /overview/{sha256} did not return 404)."),
     "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),

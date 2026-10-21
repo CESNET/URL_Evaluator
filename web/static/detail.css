@@ -725,6 +725,21 @@
 .detail .ha-badge.done    { color: #344054; background-color: #f9fafb; border-color: #d0d5dd; }
 .detail .ha-badge.failed  { color: #b54708; background-color: #fffaeb; border-color: #fedf89; }
 
+/* Spinner shown while the scheduled result fetches of a submission are pending */
+.detail .ha-fetch-wait {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 4px;
+    vertical-align: middle;
+    border: 2px solid #b2ddff;
+    border-top-color: #175cd3;
+    border-radius: 50%;
+    animation: ha-fetch-spin 1s linear infinite;
+}
+@keyframes ha-fetch-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .detail .ha-fetch-wait { animation: none; } }
+
 .detail .ha-submit-form {
     display: flex;
     flex-wrap: wrap;

@@ -28,6 +28,15 @@ Runs on the cron schedule `scheduler.activity_scanner`. It runs immediately on s
    4. **Update `urls`**: `status`, `last_scanned`, and `last_active` (only when active). Sets `status_changed = 'yes'` when the status flips.
    5. **Mark processed**: the URL is added to `activity_scanner_progress`.
 5. **Finish**: once all threads have joined, the run gets `finished_at` and its progress rows are deleted. If the run was stopped with URLs left, it stays open and is resumed on the next start.
+   Then the reports of samples submitted from the web UI that the scheduled fetches did not find are fetched (`fetch_unfinished_results`). Samples whose hash was already queried in this run are skipped.
 6. **Summary** (`_log_run_summary`): logs URLs updated, active, inactive and status-changed, plus Hybrid Analysis usage. It warns on HTTP 429 or when the peak reaches 200 requests/min.
+
+### Scheduled fetches of submitted samples (`fetch_submission_results`)
+
+When an analyst submits a sample from the web UI (Sandbox tab), `submit_content` sets `sandbox_submissions.next_fetch_at` to 10 minutes after the submission. Every 60 s (`FETCH_POLL_SECONDS`), independently of the daily run, `fetch_scheduled_results` sends GET /overview/{sha256} for every pending submission whose `next_fetch_at` has passed:
+
+- **Report found**: the submission is marked `done` (with its verdict) and the lookup is stored in `content.sandbox_info`.
+- **Not ready (404), failed or skipped (paused after 429)**: `fetch_attempts` is incremented and `next_fetch_at` moves to the next time of the schedule (20, then 30 min after the submission, `ha_fetch_schedule_minutes`).
+- **After the last scheduled fetch**: `next_fetch_at` becomes NULL and the next daily run fetches the report (step 5).
 
 On SIGINT, SIGTERM or SIGABRT, `stop_event` is set: each worker finishes its current URL and stops, and the remaining URLs are left for the resumed run.

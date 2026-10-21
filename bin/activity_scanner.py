@@ -55,6 +55,12 @@ run_stats_lock = threading.Lock()
 stop_event = threading.Event()
 # Only one run at a time (a resumed run may overlap the scheduled one).
 run_lock = threading.Lock()
+# Held by fetch_submission_results(): if a poll is still waiting on Hybrid
+# Analysis when the next FETCH_POLL_SECONDS tick fires, that tick is skipped
+# so the same due submission is not fetched (and its API quota spent) twice.
+fetch_lock = threading.Lock()
+# How often the scheduled fetches of submitted samples are checked for being due.
+FETCH_POLL_SECONDS = 60
 
 
 def _count(key, n=1):
@@ -217,11 +223,48 @@ def activity_scanner():
         run_lock.release()
 
 
+def fetch_submission_results():
+    """
+    Fetch the report of samples an analyst submitted to Hybrid Analysis from
+    the web UI, 10, 20 and 30 minutes after the submission (runs every
+    FETCH_POLL_SECONDS, independently of the daily scan). Submissions without
+    a report after the last scheduled fetch are left to the next daily run.
+    """
+    if hybrid_analysis is None or stop_event.is_set() or not fetch_lock.acquire(blocking=False):
+        return
+    try:
+        with SQLiteWrapper(config.db_path) as db:
+            st = hybrid_analysis.fetch_scheduled_results(db, config)
+        if st:
+            logger.info(
+                f"Hybrid Analysis scheduled fetches of submitted samples: {st.get('found', 0)} report(s) fetched, "
+                f"{st.get('not_ready', 0)} not ready yet, {st.get('failed', 0)} failed, "
+                f"{st.get('skipped', 0)} skipped (disabled / paused after 429), "
+                f"{st.get('schedule_ended', 0)} left to the next daily run"
+            )
+    except Exception as e:
+        logger.warning(f"Scheduled Hybrid Analysis fetches failed: {e}")
+    finally:
+        fetch_lock.release()
+
+
+def _fetch_unfinished_submissions(run_started_at):
+    """Daily run: fetch the reports the scheduled fetches (10/20/30 min) did not find."""
+    if hybrid_analysis is None:
+        return
+    with SQLiteWrapper(config.db_path) as db:
+        st = hybrid_analysis.fetch_unfinished_results(db, config, checked_since=run_started_at)
+    # Log the number of submissions found and those still waiting for a report.
+    _count("ha_submissions_found", st.get("found", 0))
+    _count("ha_submissions_waiting", sum(st.values()) - st.get("found", 0))
+
+
 def _run():
     if stop_event.is_set():
         return
     logger.info("Job started")
     started = time.monotonic()
+    started_at = _now()
     with run_stats_lock:
         run_stats.clear()
     if hybrid_analysis is not None:
@@ -272,6 +315,12 @@ def _run():
         else:
             db.execute("UPDATE activity_scanner_runs SET finished_at = ? WHERE id = ?", (_now(), run_id))
             db.execute("DELETE FROM activity_scanner_progress WHERE run_id = ?", (run_id,))
+    if not interrupted:
+        # fetch the reports of samples submitted from the web UI 
+        # that are not ready yet (10/20/30 min after submission) and were not fetched 
+        # by the scheduled fetches next day
+        # for example bc url might be inactive
+        _fetch_unfinished_submissions(started_at)
     _log_run_summary(len(urls), time.monotonic() - started, interrupted)
 
 
@@ -294,6 +343,11 @@ def _log_run_summary(urls_loaded, elapsed, interrupted=False):
         f"{st.get('ha_tested', 0)} already analysed by HA, {st.get('ha_failed', 0)} failed, "
         f"{st.get('ha_skipped', 0)} skipped (disabled / paused after 429)"
     )
+    if st.get("ha_submissions_found") or st.get("ha_submissions_waiting"):
+        logger.info(
+            f"Hybrid Analysis submitted samples: {st.get('ha_submissions_found', 0)} report(s) fetched, "
+            f"{st.get('ha_submissions_waiting', 0)} still without report"
+        )
     logger.info(
         f"Hybrid Analysis API usage: {ha['requests']} GET requests, avg {ha['requests'] / minutes:.1f}/min, "
         f"peak {ha['peak_per_minute']} in any 60 s window (quota 200/min), "
@@ -339,6 +393,8 @@ if __name__ == '__main__':
     # Start scheduler
     scheduler = BlockingScheduler(timezone=config.scheduler["timezone"])
     scheduler.add_job(activity_scanner, "cron", **config.scheduler["activity_scanner"])
+    # Reports of samples submitted from the web UI (10, 20, 30 min after submission)
+    scheduler.add_job(fetch_submission_results, "interval", seconds=FETCH_POLL_SECONDS)
 
     # Register signal handlers (the handler needs the scheduler)
     signal.signal(signal.SIGINT, sigint_handler)

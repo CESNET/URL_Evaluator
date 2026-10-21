@@ -415,7 +415,7 @@
             {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted automatically &mdash; a logged-in analyst can submit a sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404).</p>
+                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted automatically &mdash; a logged-in analyst can submit a sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404). The report of a submitted sample is fetched automatically 10, 20 and 30 minutes after the submission, later by the daily activity scan.</p>
             </div>
 
             {% for e in sandbox_entries %}
@@ -433,7 +433,9 @@
                         {% else %}
                         <span class="ha-badge unknown">not checked</span>
                         {% endif %}
-                        {% if e.submission and e.submission.status != 'error' %}
+                        {% if e.fetch_plan %}
+                        <span class="ha-badge pending">waiting for report</span>
+                        {% elif e.submission and e.submission.status != 'error' %}
                         <span class="ha-badge pending">submitted</span>
                         {% endif %}
                     </div>
@@ -575,6 +577,29 @@
                                 {% endif %}
                             </td>
                         </tr>
+                        {% set plan = e.fetch_plan %}
+                        {% if plan or e.submission.last_fetch_at %}
+                        <tr>
+                            <td>Result fetch</td>
+                            <td>
+                                {% if plan and plan.waiting %}
+                                <span class="ha-fetch-wait" aria-hidden="true"></span>
+                                Waiting for the analysis &mdash; scheduled fetch {{ plan.attempt }}/{{ plan.attempts_total }} at
+                                <strong>{{ plan.next_fetch_at|fmt_ts }}</strong>
+                                <span class="derived-none">(GET /overview/{sha256} {{ plan.schedule }} min after the submission)</span>
+                                <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">refresh &rarr;</a>
+                                {% elif plan %}
+                                No report after the {{ plan.attempts_total }} scheduled fetches ({{ plan.schedule }} min after the submission)
+                                &mdash; the next daily activity scan fetches it.
+                                {% elif e.submission.status == 'done' %}
+                                Report fetched {{ e.submission.last_fetch_at|fmt_ts }}{% if e.submission.verdict %}<span class="sandbox-sep">&middot;</span>verdict <strong>{{ e.submission.verdict }}</strong>{% endif %}
+                                {% endif %}
+                                {% if plan and e.submission.last_fetch_at %}
+                                <br><span class="derived-none">Last fetch {{ e.submission.last_fetch_at|fmt_ts }}: report not ready yet.</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
                         {% endif %}
                         {% if e.can_submit %}
                         <tr>
