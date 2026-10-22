@@ -530,6 +530,10 @@
                             <td>{{ (ov.analysis_start_time or ov.submitted_at)|fmt_ts }}</td>
                         </tr>
                         {% endif %}
+                        {# Entries built from Overview.reports carry only a job ID -> skip them. #}
+                        {% set reports = [] %}
+                        {% for r in ha.reports or [] if r.environment_description or r.environment_id or r.state or r.verdict %}{% set _ = reports.append(r) %}{% endfor %}
+                        {% if reports %}
                         <tr>
                             <td>Reports</td>
                             <td>
@@ -538,7 +542,7 @@
                                         <tr><th>Environment</th><th>State</th><th>Verdict</th></tr>
                                     </thead>
                                     <tbody>
-                                        {% for r in ha.reports %}
+                                        {% for r in reports %}
                                         <tr>
                                             <td>{{ r.environment_description or r.environment_id or '—' }}</td>
                                             <td>{{ r.state or '—' }}{% if r.error_type %} <span class="ha-error">({{ r.error_type }})</span>{% endif %}</td>
@@ -549,6 +553,7 @@
                                 </table>
                             </td>
                         </tr>
+                        {% endif %}
                         {% endif %}
                         {% if e.ha_response_pretty %}
                         <tr>
