@@ -23,8 +23,10 @@ except Exception:
     content_store = None
 try:
     from common import hybrid_analysis
+    from common import ha_fetch_scheduler
 except Exception:
     hybrid_analysis = None
+    ha_fetch_scheduler = None
 
 logger = logging.getLogger("activity_status.py")
 
@@ -55,12 +57,6 @@ run_stats_lock = threading.Lock()
 stop_event = threading.Event()
 # Only one run at a time (a resumed run may overlap the scheduled one).
 run_lock = threading.Lock()
-# Held by fetch_submission_results(): if a poll is still waiting on Hybrid
-# Analysis when the next FETCH_POLL_SECONDS tick fires, that tick is skipped
-# so the same due submission is not fetched (and its API quota spent) twice.
-fetch_lock = threading.Lock()
-# How often the scheduled fetches of submitted samples are checked for being due.
-FETCH_POLL_SECONDS = 60
 
 
 def _count(key, n=1):
@@ -223,37 +219,12 @@ def activity_scanner():
         run_lock.release()
 
 
-def fetch_submission_results():
-    """
-    Fetch the report of samples an analyst submitted to Hybrid Analysis from
-    the web UI, 10, 20 and 30 minutes after the submission (runs every
-    FETCH_POLL_SECONDS, independently of the daily scan). Submissions without
-    a report after the last scheduled fetch are left to the next daily run.
-    """
-    if hybrid_analysis is None or stop_event.is_set() or not fetch_lock.acquire(blocking=False):
-        return
-    try:
-        with SQLiteWrapper(config.db_path) as db:
-            st = hybrid_analysis.fetch_scheduled_results(db, config)
-        if st:
-            logger.info(
-                f"Hybrid Analysis scheduled fetches of submitted samples: {st.get('found', 0)} report(s) fetched, "
-                f"{st.get('not_ready', 0)} not ready yet, {st.get('failed', 0)} failed, "
-                f"{st.get('skipped', 0)} skipped (disabled / paused after 429), "
-                f"{st.get('schedule_ended', 0)} left to the next daily run"
-            )
-    except Exception as e:
-        logger.warning(f"Scheduled Hybrid Analysis fetches failed: {e}")
-    finally:
-        fetch_lock.release()
-
-
 def _fetch_unfinished_submissions(run_started_at):
     """Daily run: fetch the reports the scheduled fetches (10/20/30 min) did not find."""
-    if hybrid_analysis is None:
+    if ha_fetch_scheduler is None:
         return
     with SQLiteWrapper(config.db_path) as db:
-        st = hybrid_analysis.fetch_unfinished_results(db, config, checked_since=run_started_at)
+        st = ha_fetch_scheduler.fetch_unfinished_results(db, config, checked_since=run_started_at)
     # Log the number of submissions found and those still waiting for a report.
     _count("ha_submissions_found", st.get("found", 0))
     _count("ha_submissions_waiting", sum(st.values()) - st.get("found", 0))
@@ -393,8 +364,10 @@ if __name__ == '__main__':
     # Start scheduler
     scheduler = BlockingScheduler(timezone=config.scheduler["timezone"])
     scheduler.add_job(activity_scanner, "cron", **config.scheduler["activity_scanner"])
-    # Reports of samples submitted from the web UI (10, 20, 30 min after submission)
-    scheduler.add_job(fetch_submission_results, "interval", seconds=FETCH_POLL_SECONDS)
+    # Reports of samples submitted from the web UI (10, 20, 30 min after submission);
+    # evaluator fetches its own submissions.
+    if ha_fetch_scheduler is not None:
+        ha_fetch_scheduler.FetchJob(config, by_evaluator=False).schedule(scheduler)
 
     # Register signal handlers (the handler needs the scheduler)
     signal.signal(signal.SIGINT, sigint_handler)

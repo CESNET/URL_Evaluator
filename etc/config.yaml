@@ -97,16 +97,17 @@ mb_url: "https://mb-api.abuse.ch/api/v1/"
 mb_key: "!!! CHANGE THIS !!!"
 
 # Hybrid Analysis (Falcon Sandbox) - SHA-256 lookup of downloaded content
-# (evaluator / activity_scanner only check whether the sample was already analysed).
-# A logged-in analyst can submit a sample from the web UI (Sandbox tab) when its
-# hash lookup returned HTTP 404; the key then needs submission rights.
+# (evaluator / activity_scanner check whether the sample was already analysed).
+# A sample whose hash lookup returned HTTP 404 is submitted by evaluator when its URL
+# stays unclassified and the content is an executable or a script, or by a logged-in
+# analyst from the web UI (Sandbox tab); the key then needs submission rights.
 # Lookups and submissions are disabled while the key is not set.
 ha_url: "https://hybrid-analysis.com/api/v2"
 ha_key: "!!! CHANGE THIS !!!"
 ha_recheck_hours: 12 # minimal age of a stored result before the hash is queried again
 ha_stats_interval_minutes: 10 # evaluator logs Hybrid Analysis usage (requests/min, 429s) this often
-ha_environment_id: 330 # default environment offered for web UI submissions (330 = Linux Ubuntu 24.04 64 bit)
-# activity_scanner fetches the report of a web UI submission this many minutes after it, then leaves it to the daily run
+ha_environment_id: 330 # environment of evaluator submissions and default one offered in the web UI (330 = Linux Ubuntu 24.04 64 bit)
+# evaluator (its own submissions) / activity_scanner (web UI submissions) fetch the report this many minutes after the submission, then leave it to the daily run
 ha_fetch_schedule_minutes: [10, 20, 30] 
 # Honeynet.Asia
 hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"

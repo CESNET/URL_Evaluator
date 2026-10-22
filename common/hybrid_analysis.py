@@ -7,17 +7,23 @@ For each payload stored by ``content_store``, its SHA-256 is looked up to see
 whether the sample has already been detonated. The result is stored as JSON in
 ``content.sandbox_info`` under the ``"hybrid_analysis"`` key.
 
-Samples are never submitted automatically. An analyst can submit a sample
-from the web UI (``submit_content``), but only when ``GET /overview/{sha256}``
-answered HTTP 404 (hash never analysed). The submission is logged in the
-``sandbox_submissions`` table and its API answer is stored in
+A sample is submitted (``submit_content``) only when ``GET /overview/{sha256}``
+answered HTTP 404 (hash never analysed), either by an analyst from the web UI
+or by evaluator when a URL stays unclassified and its content is an
+executable or a script (``EVALUATOR_SUBMITTER``). The submission is logged in
+the ``sandbox_submissions`` table and its API answer is stored in
 ``content.sandbox_info`` under the ``"hybrid_analysis_submission"`` key.
 
 The report of a submitted sample is fetched (GET /overview/{sha256}) 10, 20
-and 30 minutes after the submission by activity_scanner
-(``fetch_scheduled_results``). When none of these fetches finds the report,
-the schedule ends and the next regular activity_scanner run fetches it
-(``fetch_unfinished_results``).
+and 30 minutes after the submission by ``ha_fetch_scheduler``: by evaluator
+for its own submissions, by activity_scanner for the web UI ones. When none
+of these fetches finds the report, the next regular activity_scanner run
+fetches it.
+
+When the report of a submission is found (by any of these fetches or by a
+regular hash lookup), its verdict classifies the URLs serving the sample that
+are unclassified at that moment (``classify_urls``). Hybrid Analysis never
+changes the classification of an already classified URL.
 """
 
 import json
@@ -37,7 +43,7 @@ SAMPLE_URL = "https://hybrid-analysis.com/sample/{sha256}"
 DEFAULT_RECHECK_HOURS = 12
 # HTTP statuses that are a valid answer: 404 = "Requested hash not found",
 # i.e. the sample has never been analysed on Hybrid Analysis.
-_ANSWER_STATUSES = (200, 404)
+ANSWER_STATUSES = (200, 404)
 # Back-off after HTTP 429 when the server does not say how long to wait.
 DEFAULT_BACKOFF_SECONDS = 3600
 
@@ -59,9 +65,17 @@ DEFAULT_ENVIRONMENT_ID = 330
 # Submissions that are still valid -- a hash is not submitted again while one exists.
 _ACTIVE_SUBMISSION_STATUSES = ("pending", "running", "done")
 # Submissions still waiting for their report.
-_WAITING_SUBMISSION_STATUSES = ("pending", "running")
+WAITING_SUBMISSION_STATUSES = ("pending", "running")
 # Minutes after a submission at which its report is fetched (GET /overview/{sha256}).
 DEFAULT_FETCH_SCHEDULE_MINUTES = (10, 20, 30)
+# sandbox_submissions.submitted_by of the automatic submissions made by evaluator.
+EVALUATOR_SUBMITTER = "evaluator"
+# Content categories (file_classifier.CATEGORIES) evaluator submits automatically.
+AUTO_SUBMIT_CATEGORIES = ("executable", "script")
+# Overview verdict -> URL classification. Other verdicts ('suspicious',
+# 'no specific threat', 'no verdict') leave the URL unclassified.
+_VERDICT_CLASSIFICATIONS = {"malicious": "malicious", "whitelisted": "harmless"}
+CLASSIFICATION_REASON = "Hybrid Analysis check"
 
 # Overview fields worth keeping (the full Overview object is large).
 _OVERVIEW_FIELDS = (
@@ -112,9 +126,9 @@ def request_stats():
 
 
 def _get(url, **kwargs):
-    """GET via _request(); statuses in _ANSWER_STATUSES (e.g. 404 = hash not
+    """GET via _request(); statuses in ANSWER_STATUSES (e.g. 404 = hash not
     analysed yet) are valid answers and are not logged as unexpected."""
-    return _request("GET", url, _ANSWER_STATUSES, **kwargs)
+    return _request("GET", url, ANSWER_STATUSES, **kwargs)
 
 
 def _request(method, url, expected_statuses, **kwargs):
@@ -295,6 +309,79 @@ def is_submittable(lookup):
     return bool(lookup) and lookup.get("http_status") == 404
 
 
+def classification_from_lookup(lookup):
+    """
+    URL classification from the Overview verdict of a found report:
+    ``{classification, classification_reason[, threat_label]}``, or None when
+    the hash has no report or its verdict does not decide (e.g. 'suspicious').
+    """
+    if not lookup or not lookup.get("tested"):
+        return None
+    overview = lookup.get("overview") or {}
+    classification = _VERDICT_CLASSIFICATIONS.get(str(overview.get("verdict") or "").lower())
+    if classification is None:
+        return None
+    result = {"classification": classification, "classification_reason": CLASSIFICATION_REASON}
+    if classification == "malicious" and overview.get("vx_family"):
+        result["threat_label"] = overview["vx_family"]
+    return result
+
+
+def classify_urls(db, sha256, lookup):
+    """
+    Classify every evaluated URL that served the content `sha256` and is
+    unclassified at this moment by the verdict of its report (see
+    classification_from_lookup), record it in classification_history and,
+    when malicious, mark its unclassified source URLs malicious too. An
+    already classified URL is never changed. URLs not evaluated yet are left
+    to evaluator, which classifies them by the same report.
+    Returns the list of reclassified URLs. Never raises.
+    """
+    cls = classification_from_lookup(lookup)
+    if cls is None:
+        return []
+    try:
+        urls = [row[0] for row in db.execute(
+            "SELECT DISTINCT u.url FROM urls u JOIN download_observations o ON o.url = u.url "
+            "JOIN content c ON c.id = o.content_id "
+            "WHERE c.sha256 = ? AND u.classification = 'unclassified' AND u.evaluated = 'yes'",
+            (sha256,),
+        ).fetchall()]
+        for url in urls:
+            db.execute(
+                "UPDATE urls SET classification = ?, classification_reason = ?, "
+                "threat_label = COALESCE(?, threat_label) WHERE url = ?",
+                (cls["classification"], cls["classification_reason"], cls.get("threat_label"), url),
+            )
+            db.record_classification(url, cls["classification"], reason=cls["classification_reason"],
+                                     actor="hybrid-analysis")
+            logger.info(f"URL {url} was classified as {cls['classification']} by the Hybrid Analysis report of {sha256}")
+            if cls["classification"] == "malicious":
+                _mark_source_urls_malicious(db, url)
+        return urls
+    except Exception as e:
+        logger.warning(f"Could not classify URLs of content {sha256} by its Hybrid Analysis report: {e}")
+        return []
+
+
+def _mark_source_urls_malicious(db, url):
+    """
+    Mark the unclassified URLs that `url` was downloaded from malicious
+    (back-propagation like in evaluator, but never over a classification).
+    """
+    sources = [row[0] for row in db.execute(
+        "SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url "
+        "WHERE s.url = ? AND urls.classification = 'unclassified'", (url,)).fetchall()]
+    for src_url in sources:
+        db.execute("UPDATE urls SET classification = 'malicious', classification_reason = "
+                   "'Downloading from malicious URL' WHERE url = ? AND classification = 'unclassified'",
+                   (src_url,))
+        db.record_classification(src_url, "malicious", reason="Downloading from malicious URL",
+                                 actor="hybrid-analysis-backprop")
+    if sources:
+        logger.info(f"URLs {sources} were classified as malicious because they downloaded content from a malicious URL ({url})")
+
+
 def check_content(db, config, content_id, sha256, force=False):
     """
     Look up a stored content sample on Hybrid Analysis and persist the result
@@ -326,7 +413,7 @@ def check_content_outcome(db, config, content_id, sha256, force=False):
 
         # A lookup marked stale (the sample was submitted since) is never reused.
         if (previous and not force and not previous.get("stale")
-                and previous.get("http_status") in _ANSWER_STATUSES):
+                and previous.get("http_status") in ANSWER_STATUSES):
             try:
                 age = datetime.now(timezone.utc) - datetime.fromisoformat(previous["checked_at"])
                 if age < timedelta(hours=getattr(config, "ha_recheck_hours", DEFAULT_RECHECK_HOURS)):
@@ -337,14 +424,14 @@ def check_content_outcome(db, config, content_id, sha256, force=False):
         result = lookup_sha256(config, sha256)
         if result is None:
             return previous, "skipped"
-        outcome = "checked" if result["http_status"] in _ANSWER_STATUSES else "failed"
+        outcome = "checked" if result["http_status"] in ANSWER_STATUSES else "failed"
         # A submitted sample stays unknown (404) until its analysis ends -- keep
         # querying it on every run instead of caching the 404.
         if previous and previous.get("stale") and result["http_status"] == 404:
             result["stale"] = True
         # Keep a previous successful answer when this attempt failed.
         if (outcome == "failed" and previous
-                and previous.get("http_status") in _ANSWER_STATUSES):
+                and previous.get("http_status") in ANSWER_STATUSES):
             previous["last_error"] = {"checked_at": result["checked_at"],
                                       "http_status": result["http_status"],
                                       "error": result["error"]}
@@ -352,7 +439,7 @@ def check_content_outcome(db, config, content_id, sha256, force=False):
         info["hybrid_analysis"] = result
         db.execute("UPDATE content SET sandbox_info = ? WHERE id = ?", (json.dumps(info), content_id))
         if outcome == "checked" and result.get("tested"):
-            _finish_submissions(db, sha256, result)
+            finish_submissions(db, sha256, result)
         return result, outcome
     except Exception as e:
         logger.warning(f"Could not store Hybrid Analysis result for content {content_id}: {e}")
@@ -451,7 +538,7 @@ def fetch_schedule(config):
     return tuple(sorted(int(m) for m in minutes)) if minutes else DEFAULT_FETCH_SCHEDULE_MINUTES
 
 
-def _next_fetch_at(config, submitted_at, after):
+def scheduled_fetch_at(config, submitted_at, after):
     """
     Return the first scheduled fetch time (ISO, UTC) of a submission made at
     `submitted_at` that is later than `after` (datetime), or None when every
@@ -465,133 +552,25 @@ def _next_fetch_at(config, submitted_at, after):
     return None
 
 
-def _finish_submissions(db, sha256, lookup):
-    """Mark the waiting submissions of `sha256` done once the hash lookup found a report."""
+def finish_submissions(db, sha256, lookup):
+    """
+    Mark the waiting submissions of `sha256` done once the hash lookup found a
+    report, and classify the URLs serving the sample that are unclassified at
+    this moment (classify_urls).
+    """
     verdict = (lookup.get("overview") or {}).get("verdict")
     try:
-        db.execute(
+        finished = db.execute(
             "UPDATE sandbox_submissions SET status = 'done', verdict = COALESCE(?, verdict), "
             "next_fetch_at = NULL, last_fetch_at = ? WHERE sha256 = ? AND sandbox_name = ? "
-            f"AND status IN ({', '.join('?' * len(_WAITING_SUBMISSION_STATUSES))})",
-            (verdict, lookup.get("checked_at"), sha256, SANDBOX_NAME, *_WAITING_SUBMISSION_STATUSES),
-        )
+            f"AND status IN ({', '.join('?' * len(WAITING_SUBMISSION_STATUSES))})",
+            (verdict, lookup.get("checked_at"), sha256, SANDBOX_NAME, *WAITING_SUBMISSION_STATUSES),
+        ).rowcount
     except Exception as e:
         logger.warning(f"Could not mark Hybrid Analysis submissions of {sha256} done: {e}")
-
-
-def _fetch_submission_result(db, config, submission_id, content_id, sha256):
-    """
-    Send GET /overview/{sha256} for a waiting submission and store the answer
-    (content.sandbox_info, submission status). Returns the lookup outcome
-    ('checked' / 'failed' / 'skipped') and whether the report exists.
-    """
-    if content_id is not None:
-        result, outcome = check_content_outcome(db, config, content_id, sha256, force=True)
-    else:
-        # The content row was purged -- only the submission can be updated.
-        result = lookup_sha256(config, sha256)
-        outcome = "skipped" if result is None else (
-            "checked" if result["http_status"] in _ANSWER_STATUSES else "failed")
-        if outcome == "checked" and result.get("tested"):
-            _finish_submissions(db, sha256, result)
-    found = bool(outcome == "checked" and result and result.get("tested"))
-    if not found and outcome != "skipped":
-        db.execute("UPDATE sandbox_submissions SET last_fetch_at = ? WHERE id = ?",
-                   ((result or {}).get("checked_at"), submission_id))
-    return outcome, found
-
-
-def fetch_scheduled_results(db, config, now=None):
-    """
-    Fetch the report of every submission whose scheduled fetch time
-    (``next_fetch_at``: 10, 20, 30 min after the submission) has come.
-
-    A fetch that finds the report marks the submission done. Otherwise the
-    next scheduled time is set, or -- after the last one -- the schedule ends
-    (``next_fetch_at`` = NULL) and fetch_unfinished_results() of the next
-    regular activity_scanner run takes over. A fetch that could not be sent
-    (API disabled / paused after HTTP 429) still uses up its time slot.
-
-    Returns a Counter: 'found', 'not_ready', 'failed', 'skipped', 'schedule_ended'.
-    Never raises.
-    """
-    stats = Counter()
-    if not is_enabled(config):
-        return stats
-    now = now or datetime.now(timezone.utc)
-    try:
-        due = db.execute(
-            "SELECT id, content_id, sha256, submitted_at, fetch_attempts FROM sandbox_submissions "
-            "WHERE sandbox_name = ? AND next_fetch_at IS NOT NULL AND next_fetch_at <= ? "
-            f"AND status IN ({', '.join('?' * len(_WAITING_SUBMISSION_STATUSES))}) ORDER BY next_fetch_at",
-            (SANDBOX_NAME, now.isoformat(timespec="seconds"), *_WAITING_SUBMISSION_STATUSES),
-        ).fetchall()
-    except Exception as e:
-        logger.warning(f"Cannot read scheduled Hybrid Analysis fetches (apply DB migrations via install/migrate.sh): {e}")
-        return stats
-
-    for submission_id, content_id, sha256, submitted_at, attempts in due:
-        try:
-            outcome, found = _fetch_submission_result(db, config, submission_id, content_id, sha256)
-            attempts += 1
-            if found:
-                stats["found"] += 1
-                db.execute("UPDATE sandbox_submissions SET fetch_attempts = ? WHERE id = ?", (attempts, submission_id))
-                logger.info(f"Hybrid Analysis: report of submitted {sha256} fetched (scheduled fetch {attempts})")
-                continue
-            stats["not_ready" if outcome == "checked" else outcome] += 1
-            next_at = _next_fetch_at(config, submitted_at, now)
-            db.execute("UPDATE sandbox_submissions SET fetch_attempts = ?, next_fetch_at = ? WHERE id = ?",
-                       (attempts, next_at, submission_id))
-            if next_at is None:
-                stats["schedule_ended"] += 1
-                logger.info(f"Hybrid Analysis: no report of submitted {sha256} after {attempts} scheduled "
-                            f"fetch(es), the next activity_scanner run fetches it")
-            else:
-                logger.info(f"Hybrid Analysis: report of submitted {sha256} not ready ({outcome}), next fetch at {next_at}")
-        except Exception as e:
-            stats["failed"] += 1
-            logger.warning(f"Scheduled Hybrid Analysis fetch of submission {submission_id} failed: {e}")
-    return stats
-
-
-def fetch_unfinished_results(db, config, checked_since=None):
-    """
-    Fetch the report of every submission still waiting after its scheduled
-    fetches ended (called once per regular activity_scanner run).
-
-    Submissions whose content was already looked up at or after
-    `checked_since` (ISO timestamp, e.g. the start of the run) are skipped --
-    the run has just queried their hash.
-
-    Returns a Counter like fetch_scheduled_results(). Never raises.
-    """
-    stats = Counter()
-    if not is_enabled(config):
-        return stats
-    try:
-        waiting = db.execute(
-            "SELECT s.id, s.content_id, s.sha256, c.sandbox_info FROM sandbox_submissions s "
-            "LEFT JOIN content c ON c.id = s.content_id "
-            "WHERE s.sandbox_name = ? AND s.next_fetch_at IS NULL "
-            f"AND s.status IN ({', '.join('?' * len(_WAITING_SUBMISSION_STATUSES))})",
-            (SANDBOX_NAME, *_WAITING_SUBMISSION_STATUSES),
-        ).fetchall()
-    except Exception as e:
-        logger.warning(f"Cannot read waiting Hybrid Analysis submissions (apply DB migrations via install/migrate.sh): {e}")
-        return stats
-
-    for submission_id, content_id, sha256, sandbox_info in waiting:
-        lookup = get_lookup(sandbox_info) or {}
-        if checked_since and (lookup.get("checked_at") or "") >= checked_since:
-            continue
-        try:
-            outcome, found = _fetch_submission_result(db, config, submission_id, content_id, sha256)
-            stats["found" if found else ("not_ready" if outcome == "checked" else outcome)] += 1
-        except Exception as e:
-            stats["failed"] += 1
-            logger.warning(f"Hybrid Analysis fetch of submission {submission_id} failed: {e}")
-    return stats
+        return
+    if finished:
+        classify_urls(db, sha256, lookup)
 
 
 def submit_content(db, config, content_id, file_path, sha256, user, environment_id):
@@ -631,8 +610,8 @@ def submit_content(db, config, content_id, file_path, sha256, user, environment_
         if result is None:
             return None, "skipped"
         ok = result["error"] is None
-        # activity_scanner fetches the report 10, 20 and 30 min after the submission.
-        next_fetch_at = (_next_fetch_at(config, result["submitted_at"], datetime.fromisoformat(result["submitted_at"]))
+        # The report is fetched 10, 20 and 30 min after the submission (ha_fetch_scheduler).
+        next_fetch_at = (scheduled_fetch_at(config, result["submitted_at"], datetime.fromisoformat(result["submitted_at"]))
                          if ok else None)
         db.execute(
             "INSERT INTO sandbox_submissions (content_id, sha256, sandbox_name, submitted_at, "

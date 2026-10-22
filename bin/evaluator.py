@@ -11,6 +11,7 @@ import magic
 import requests
 import logging
 import virustotal_python
+from apscheduler.schedulers.background import BackgroundScheduler
 from collections import Counter
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
@@ -26,8 +27,10 @@ except Exception:
     content_store = None
 try:
     from common import hybrid_analysis
+    from common import ha_fetch_scheduler
 except Exception:
     hybrid_analysis = None
+    ha_fetch_scheduler = None
 
 logger = logging.getLogger("evaluator.py")
 
@@ -51,6 +54,10 @@ bl_last_updated = None
 ha_url_stats = Counter()
 ha_stats_started = 0.0
 
+# Scheduled fetches (10, 20, 30 min) of the reports of evaluator's own
+# submissions; a found report classifies the unclassified URLs (set by init()).
+fetch_job = None
+
 running_flag = False
 
 
@@ -62,7 +69,7 @@ def init(cfg, db_conn=None):
     global config, db, proxies
     global vt_minute_quota, vt_minute_quota_cnt, vt_minute_quota_timestamp
     global vt_daily_quota_exceeded, vt_daily_quota_timestamp
-    global blacklist, bl_last_updated, ha_url_stats, ha_stats_started
+    global blacklist, bl_last_updated, ha_url_stats, ha_stats_started, fetch_job
 
     config = cfg
 
@@ -87,6 +94,8 @@ def init(cfg, db_conn=None):
     ha_stats_started = time.monotonic()
     if hybrid_analysis is not None:
         hybrid_analysis.reset_request_stats()
+    if ha_fetch_scheduler is not None:
+        fetch_job = ha_fetch_scheduler.FetchJob(config, by_evaluator=True)
 
     db = db_conn if db_conn is not None else SQLiteWrapper(config.db_path)
 
@@ -237,6 +246,47 @@ def _check_hybrid_analysis(db_conn, content_id, sha256, url=None):
         logger.warning(f"Hybrid Analysis lookup for content of {url} failed (HTTP {last_status})")
 
 
+def _submit_unclassified_content(url, body):
+    """
+    The URL stayed unclassified: when its stored content is an executable or
+    a script, classify it by the Hybrid Analysis report of the content, or
+    submit the content to Hybrid Analysis when it has never been analysed.
+    The report of a submission is fetched 10, 20 and 30 min later
+    (fetch_job) and then classifies the URL.
+    Returns a classification dict when a report already decides, else None.
+    Best-effort: never breaks the evaluation.
+    """
+    if hybrid_analysis is None or not body or not hybrid_analysis.is_enabled(config):
+        return None
+    sha256 = hashlib.sha256(body).hexdigest()
+    try:
+        row = db.execute("SELECT id, file_path, file_category, sandbox_info FROM content WHERE sha256 = ?",
+                         (sha256,)).fetchone()
+    except Exception as e:
+        logger.warning(f"Could not read stored content of {url}: {e}")
+        return None
+    if not row:
+        logger.debug(f"Content of {url} is not stored, not submitted to Hybrid Analysis")
+        return None
+    content_id, file_path, category, sandbox_info = row
+    if category not in hybrid_analysis.AUTO_SUBMIT_CATEGORIES:
+        logger.debug(f"Content of {url} is {category}, not submitted to Hybrid Analysis")
+        return None
+
+    # The lookup made when the content was stored may already have the report.
+    if cls := hybrid_analysis.classification_from_lookup(hybrid_analysis.get_lookup(sandbox_info)):
+        return cls
+    environment_id = getattr(config, "ha_environment_id", None) or hybrid_analysis.DEFAULT_ENVIRONMENT_ID
+    result, outcome = hybrid_analysis.submit_content(db, config, content_id, file_path, sha256,
+                                                     hybrid_analysis.EVALUATOR_SUBMITTER, environment_id)
+    ha_url_stats[f"submit_{outcome}"] += 1
+    logger.info(f"Hybrid Analysis submission of unclassified {category} content {sha256[:12]}… of {url}: {outcome}")
+    if outcome in ("already_analysed", "already_submitted"):
+        row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (content_id,)).fetchone()
+        return hybrid_analysis.classification_from_lookup(hybrid_analysis.get_lookup(row[0] if row else None))
+    return None
+
+
 def _log_ha_usage_if_ha_stats_interval_minutes_reached(force=False):
     """
     Safe to call on every loop iteration: returns immediately unless the
@@ -259,7 +309,8 @@ def _log_ha_usage_if_ha_stats_interval_minutes_reached(force=False):
             f"{ha_url_stats['checked'] + ha_url_stats['cached']} URLs with hash successfully checked "
             f"({ha_url_stats['checked']} queried now, {ha_url_stats['cached']} from stored result), "
             f"{ha_url_stats['tested']} already analysed by HA, {ha_url_stats['failed']} failed, "
-            f"{ha_url_stats['skipped']} skipped; API: {ha['requests']} GET requests, "
+            f"{ha_url_stats['skipped']} skipped, {ha_url_stats['submit_submitted']} unclassified samples submitted; "
+            f"API: {ha['requests']} requests, "
             f"avg {ha['requests'] / minutes:.1f}/min, peak {ha['peak_per_minute']} in any 60 s window "
             f"(quota 200/min), HTTP statuses {ha['by_status']}, last Api-Limits {ha['api_limits']}"
         )
@@ -498,6 +549,8 @@ def evaluate_url(url):
     3. Check if the URL is listed on URLhaus blacklist
     4. Check file hash on MalwareBazaar (skipped on pre-fetched network errors)
     5. Check for entries on VirusTotal (URL, then file hash)
+    6. Still unclassified executable / script content: Hybrid Analysis report,
+       or submission of the content (_submit_unclassified_content)
     Returns a result dict, None when the URL was deleted by the domain
     threshold, or evaluated=no/eval_later=yes when VT rate limit was hit.
     """
@@ -562,6 +615,11 @@ def evaluate_url(url):
         if cls.get("classification_reason") == "No entry":
             cls.update(**result)
         result.update(**cls)
+
+    # Still unclassified: an executable or script content goes to Hybrid Analysis.
+    if result.get("evaluated") == "yes" and result.get("classification") == "unclassified" and prefetched:
+        if ha := _submit_unclassified_content(url, prefetched[1]):
+            result.update(**ha)
     return result
 
 
@@ -656,6 +714,12 @@ if __name__ == "__main__":
     # Set module state (proxy, VT quotas, blacklist, HA stats) and open DB connection
     init(cfg)
 
+    # Reports of samples submitted by evaluator (10, 20, 30 min after submission)
+    scheduler = BackgroundScheduler(timezone=config.scheduler["timezone"])
+    if fetch_job is not None:
+        fetch_job.schedule(scheduler)
+    scheduler.start()
+
     logger.info("Started")
     running_flag = True
     while running_flag:
@@ -671,6 +735,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception(f"Error while evaluating URL {url}: {type(e)}: {e}")
 
+    scheduler.shutdown(wait=True)
     _log_ha_usage_if_ha_stats_interval_minutes_reached(force=True)
     db.close()
     logger.info("Stopped")

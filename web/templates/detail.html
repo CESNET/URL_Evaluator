@@ -415,7 +415,7 @@
             {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). Samples are never submitted automatically &mdash; a logged-in analyst can submit a sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404). The report of a submitted sample is fetched automatically 10, 20 and 30 minutes after the submission, later by the daily activity scan.</p>
+                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). A sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404) is submitted automatically by evaluator when its URL stays unclassified and the content is an executable or a script; otherwise a logged-in analyst can submit it. The report of a submitted sample is fetched automatically 10, 20 and 30 minutes after the submission, later by the daily activity scan. Its verdict (malicious / whitelisted) classifies the URLs serving the sample only when they are still unclassified &mdash; Hybrid Analysis never changes an existing classification.</p>
             </div>
 
             {% for e in sandbox_entries %}

@@ -881,7 +881,8 @@ def download_content(content_id):
 # Message shown after a submission attempt: outcome -> (category, text).
 SUBMIT_MESSAGES = {
     "submitted": ("success", "Sample submitted to Hybrid Analysis. Its report is fetched automatically 10, 20 and 30 minutes "
-                             "after the submission; if it is not ready by then, the next daily activity scan fetches it."),
+                             "after the submission; if it is not ready by then, the next daily activity scan fetches it. "
+                             "Its verdict classifies the URLs serving the sample that are still unclassified."),
     "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
     "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /overview/{sha256} did not return 404)."),
     "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),

@@ -2,9 +2,10 @@ import hashlib
 from datetime import datetime, timezone
 
 import pytest
+from freezegun import freeze_time
 
-from tests.api_mocks import load_bytes, mock_external_apis, mock_vt
-from tests.factories import insert_url
+from tests.api_mocks import load_bytes, mock_external_apis, mock_ha_overview, mock_vt
+from tests.factories import insert_content, insert_discovered, insert_download, insert_sandbox_submission, insert_url
 
 URL = "http://evil.test/a.sh"
 SCRIPT = load_bytes("samples", "dropper.sh")
@@ -145,3 +146,78 @@ def test_too_large_content(evaluator_mod, http_mock, config, db):
     result = evaluator_mod.evaluate_url(URL)
 
     assert result["classification_reason"] == "File too large"
+
+
+# --- Hybrid Analysis submission of still unclassified executables / scripts ---
+
+def test_unclassified_script_is_submitted_to_hybrid_analysis(evaluator_mod, http_mock, config, db):
+    insert_url(db, URL)
+    serve(http_mock)
+    apis = mock_external_apis(http_mock, config)
+
+    with freeze_time("2026-01-01 12:00:00"):
+        result = evaluator_mod.evaluate_url(URL)
+
+    assert result["classification"] == "unclassified"
+    assert apis["ha_submit"].call_count == 1
+    # the report is fetched 10, 20 and 30 min after the submission
+    assert db.execute("SELECT submitted_by, status, next_fetch_at FROM sandbox_submissions").fetchone() == (
+        "evaluator", "pending", "2026-01-01T12:10:00+00:00")
+
+
+@pytest.mark.parametrize("body, content_type", [
+    (b"<html><body>It works!</body></html>", "text/html"),
+    (b'{"status": "ok"}', "application/json"),
+])
+def test_unclassified_other_content_is_not_submitted(evaluator_mod, http_mock, config, db, body, content_type):
+    insert_url(db, URL)
+    serve(http_mock, body=body, content_type=content_type)
+    apis = mock_external_apis(http_mock, config)
+
+    assert evaluator_mod.evaluate_url(URL)["classification"] == "unclassified"
+    assert apis["ha_submit"].call_count == 0
+    assert db.execute("SELECT COUNT(*) FROM sandbox_submissions").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("vt_url", ["url_malicious.json", "quota_exceeded.json"])
+def test_classified_or_postponed_url_is_not_submitted(evaluator_mod, http_mock, config, db, vt_url):
+    insert_url(db, URL)
+    serve(http_mock)
+    apis = mock_external_apis(http_mock, config, vt_url=vt_url)
+
+    evaluator_mod.evaluate_url(URL)
+
+    assert apis["ha_submit"].call_count == 0
+
+
+def test_unclassified_script_already_analysed_is_classified_by_its_report(evaluator_mod, http_mock, config, db):
+    insert_url(db, URL)
+    serve(http_mock)
+    apis = mock_external_apis(http_mock, config, ha_status=200)
+
+    result = evaluator_mod.evaluate_url(URL)
+
+    assert (result["classification"], result["classification_reason"], result["threat_label"]) == (
+        "malicious", "Hybrid Analysis check", "Linux.Mirai")
+    assert apis["ha_submit"].call_count == 0
+
+
+def test_scheduled_fetch_of_evaluator_submission_classifies_url(evaluator_mod, http_mock, config, db):
+    src_url = insert_url(db, "http://evil.test/", evaluated="yes")
+    insert_url(db, URL, evaluated="yes")
+    insert_discovered(db, URL, src_url)
+    content_id = insert_content(db, SCRIPT)
+    insert_download(db, URL, content_id)
+    insert_sandbox_submission(db, content_id, hashlib.sha256(SCRIPT).hexdigest(), submitted_by="evaluator",
+                              next_fetch_at="2026-01-01T12:10:00+00:00")
+    mock_ha_overview(http_mock, config, status=200)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        evaluator_mod.fetch_job.run()
+
+    assert db.execute("SELECT classification, classification_reason, threat_label FROM urls WHERE url = ?",
+                      (URL,)).fetchone() == ("malicious", "Hybrid Analysis check", "Linux.Mirai")
+    assert db.execute("SELECT classification FROM urls WHERE url = ?", (src_url,)).fetchone() == ("malicious",)
+    assert db.execute("SELECT url, actor FROM classification_history ORDER BY id").fetchall() == [
+        (URL, "hybrid-analysis"), (src_url, "hybrid-analysis-backprop")]
+    assert db.execute("SELECT status, verdict FROM sandbox_submissions").fetchone() == ("done", "malicious")
