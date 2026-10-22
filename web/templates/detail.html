@@ -7,18 +7,28 @@
     15. status, 16. active_last, 17. last_edit-->
 <div class="detail">
     <div class="buttons top-buttons">
+        <!-- Same quick search as on the list page; results open in the URL list -->
+        <form class="quick-search" action="{{ url_for('list_all', page=1) }}" method="get" role="search">
+            {% if show %}<input type="hidden" name="show" value="{{ show }}">{% endif %}
+            <span class="quick-search-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </span>
+            <input type="text" id="quick-search" name="q" placeholder="Search URL or content SHA-256…" autocomplete="off">
+        </form>
         <button class="back-btn btn-style" onclick="location.href='{{ url_for('list_all', show=show)}}'">Back</button>
     </div>
     <div class="wrap">
         <div class="header-wrap">
-            {% if url["status"] == 'active' %}
-                <svg height="20" width="20">
-                    <circle cx="5" cy="10" r="5" fill="green" />
-                </svg>
-            {% endif %}
             <h2
                 class="classification {{url.classification}}">
                 {{ url.url }}</h2>
+            {% if url.classification %}
+            <span class="class-badge class-{{ url.classification }}">{{ url.classification }}</span>
+            {% endif %}
+            {% if url["status"] %}
+            <span class="status-badge status-{{ url["status"] }}"
+                {% if url["status"] == 'inactive' and inactive_for %}title="inactive for {{ inactive_for }} days"{% endif %}>{{ url["status"] }}</span>
+            {% endif %}
 
             {% if url.evaluated == 'no' %} <p class="to-be-evaluated">to be evaluated</p>{% endif %}
             {% if url.eval_later == 'yes' %} <p class="to-be-evaluated">URL will be re-evaluated after VirusTotal API limit is reset</p>{% endif %}
@@ -178,6 +188,7 @@
                         <a class="ip" href="https://nerd.cesnet.cz/nerd/ip/{{ url.ip }}" target="_blank" title="NERD"><img class="nerd-img" src="{{ url_for("static", filename="img/nerd.png") }}" alt="NERD">
                             {{ url.ip }}
                         </a>
+                        <a class="nerd2-link" href="https://nerd2.cesnet.cz/ip/{{ url.ip }}" target="_blank" rel="noopener noreferrer" title="NERD2 (beta)">NERD2 BETA</a>
                     </td>
                 </tr>
                 {% endif %}
@@ -656,7 +667,7 @@
 
     </div>
     <div class="buttons">
-        {% if url.evaluated == 'yes' %}
+        {% if url.evaluated == 'yes' and not is_anon %}
         <form method="post">
             <input type="submit" class="reevaluate-btn btn-style" value="Re-evaluate">
         </form>

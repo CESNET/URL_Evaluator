@@ -20,6 +20,7 @@
 </div>
 {% endif %}
 <div id="list_all">
+  <div class="list-toolbar">
   <!-- Quick search bar: filters the table by URL substring or content SHA-256 -->
   <form class="quick-search" action="{{ url_for('list_all', page=1) }}" method="get" role="search">
     {% if show %}<input type="hidden" name="show" value="{{ show }}">{% endif %}
@@ -33,6 +34,20 @@
       onclick="window.location.href='{{ url_for('list_all', page=1, show=show, clear_filters=True) }}';">&times;</button>
     {% endif %}
   </form>
+  <div class="btn-line">
+    {% if not is_anon %}
+    <div class="filter-btn">
+      <button class="btn-style" onclick=showSelect()>Select</button>
+    </div>
+    {% endif %}
+    <div class="filter-btn">
+      <button class="btn-style" onclick=showFilter()>Filters</button>
+      {% if not is_anon %}
+      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
+      {% endif %}
+    </div>
+  </div>
+  </div>
   <!-- add filter hiden option -->
   <div id="filters">
     <form action="{{ url_for('list_all', page=1) }}" method="post" enctype="application/x-www-form-urlencoded">
@@ -194,22 +209,6 @@
   </div>
   {% endif %}
 
-  <div class="btn-line">
-    {% if not is_anon %}
-    <div class="filter-btn">
-      <button class="btn-style" onclick=showSelect()>Select</button>
-    </div>
-    {% endif %}
-    <div class="filter-btn">
-      <button class="btn-style"
-        onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
-      <button class="btn-style" onclick=showFilter()>Filters</button>
-      {% if not is_anon %}
-      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
-      {% endif %}
-    </div>
-  </div>
-
   {% if not is_anon %}
   <form class="select selected-urls" action="{{ url_for('bulk_edit') }}" method="post">
     <label>Selected URLs:</label>
@@ -227,11 +226,16 @@
   <!-- URL count summary: total when no filter is applied, matching vs. total otherwise -->
   <div class="list-summary">
     {% if filters_active %}
-    <p>Showing <strong>{{ record_count }}</strong> of <strong>{{ total_count }}</strong> URLs (filter applied)</p>
+    <p><strong>{{ record_count }}</strong> / <strong>{{ total_count }}</strong> URLs</p>
+    <span class="filter-state applied">{{ active_filter_count }}/{{ filter_count }} {{ "filter" if active_filter_count == 1 else "filters" }} applied</span>
+    <button class="btn-style btn-small"
+      onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
     {% else %}
     <p>Total URLs: <strong>{{ total_count }}</strong></p>
+    <span class="filter-state">no filters applied</span>
     {% endif %}
   </div>
+  <div class="table-wrap">
   <table class="list" id="url-table">
     <thead>
       <tr>
@@ -305,7 +309,7 @@
     <tbody>
       {% for url in url_list %}
       <tr class="table-row">
-        <td class="url">
+        <td class="url {{ url[4] }}" title="{{ url[0] }}">
           <input type="checkbox" class="select" name="selected_urls[]" value="{{ url[0] }}">
           {{ url[0] }}
         </td>
@@ -331,6 +335,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <div class="change_page">
     <button id="prev" class="btn-style {% if page == 1 %} disabled {% endif %}"
@@ -347,15 +352,6 @@
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     activeSelect();
-
-    // Apply filters as soon as one changes: selects on pick, text fields on
-    // blur (Enter submits the form natively).
-    const filterForm = document.querySelector('#filters form');
-    if (filterForm) {
-      filterForm.querySelectorAll('select, input.filter-input').forEach(function (el) {
-        el.addEventListener('change', function () { filterForm.submit(); });
-      });
-    }
   });
 
 </script>

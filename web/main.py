@@ -474,6 +474,13 @@ def list_all():
     # the URL count summary shown in the GUI.
     filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type", "sha256", "scanned_from", "scanned_to")
     filters_active = any(filter_params.get(k) for k in filter_keys)
+    # Filters as the user sees them (quick search + filter panel fields) for the
+    # "x/y filters applied" info; the show tabs count as the classification
+    # filter and the "Last scanned" from/to dates as one filter.
+    filter_groups = (("q",), ("url",), ("hash",), ("sha256",), ("reason",), ("note",),
+                     ("classification", "evaluated"), ("src",), ("status",), ("has_content",),
+                     ("sandbox",), ("content_type",), ("scanned_from", "scanned_to"))
+    active_filter_count = sum(1 for group in filter_groups if any(filter_params.get(k) for k in group))
 
     with SQLiteWrapper(config.db_path) as db:
         # get url details
@@ -488,7 +495,7 @@ def list_all():
         total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
-    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, content_type_categories=CONTENT_TYPE_CATEGORIES)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, active_filter_count=active_filter_count, filter_count=len(filter_groups), content_type_categories=CONTENT_TYPE_CATEGORIES)
 
 
 class URLDetail:

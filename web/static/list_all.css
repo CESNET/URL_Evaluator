@@ -1,278 +1,90 @@
-table.list,
-.active-filter,
-.active-add,
-.select-all,
-.selected-urls {
-  border-collapse: collapse;
-  width: 90%;
-  min-width: 800px;
-  max-width: 1200px;
+/* ---------- Main URL list page (Figma mockup, dark theme) ---------- */
+#list_all {
+  width: 100%;
+  max-width: 1400px;
   margin: 0 auto;
-  margin-top: 10px;
-  border-radius: 10px;
-}
-
-/* URL count summary shown above the table (filtered vs. total count) */
-.list-summary {
-  width: 90%;
-  min-width: 800px;
-  max-width: 1200px;
-  margin: 10px auto 0 auto;
-  text-align: right;
-}
-
-.list-summary p {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #595959;
-}
-
-table.list {
-  background-color: rgb(247, 247, 247);
-}
-
-.list thead tr {
-  background-color: #595959;
-  color: rgb(242, 242, 242);
-  border-bottom: 2px solid #eeeeee;
-  border-radius: 10px 10px 0 0;
-}
-
-
-.table {
-  border-collapse: collapse;
-}
-
-.table,
-.table th,
-.table td {
-  border: 1px solid #ccc;
-}
-
-.table th,
-.table td {
-  padding: 0.5rem;
-}
-
-.table th {
-  position: relative;
-}
-
-.resizer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 5px;
-  cursor: col-resize;
-  user-select: none;
-}
-
-.resizer:hover,
-.resizing {
-  border-right: 2px solid blue;
-}
-
-.resizable {
-  border: 1px solid gray;
-  height: 100px;
-  width: 100px;
-  position: relative;
-}
-
-.list tr {
-  display: grid;
-  width: 100%;
-  grid-template-columns: 20% 8% 11% 11% 7% 12% 5% 11% 15%;
-  padding: 10px 0;
-  align-items: center;
-  height: 45px;
-  border-bottom: 2px solid #eeeeee;
-}
-
-.list tbody tr:nth-child(even) {
-  background-color: #dedede;
-  ;
-}
-
-.list tbody tr:last-child {
-  border-radius: 0 0 10px 10px;
-}
-
-
-.list td {
-  text-align: center;
-  overflow: hidden;
-  margin: 0;
-}
-
-.list .url {
-  text-align: left !important;
-  overflow: scroll !important;
-  scrollbar-width: none;
-  white-space: nowrap;
-  padding-left: 15px;
-  display: flex;
-  flex-direction: row;
-}
-
-::-webkit-scrollbar {
-  display: none;
-}
-
-.list p {
-  margin: 0;
-  padding: 0;
-}
-
-.list .btn {
-  display: flex;
-  justify-content: center;
-  width: 100%;
   padding: 0 20px;
-  margin: 0;
 }
 
-.list .note img {
-  width: 20px;
-  height: 20px;
-  margin: 0 5px;
-}
-
-.list .classification p {
+/* Toolbar: quick search on the left, action buttons on the right */
+.list-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.list .classification p::before {
-  content: "";
-  width: 10px;
-  height: 10px;
-  margin: 5px;
-  border-radius: 50%;
-}
-
-.list th {
+.quick-search {
+  position: relative;
   display: flex;
-  flex-direction: row;
   align-items: center;
-  justify-content: center;
+  flex: 1 1 320px;
+  max-width: 480px;
 }
 
-.list tr:first-child {
-  padding: 0;
-  align-items: center;
-}
-
-.list .sort {
-  display: flex;
-  flex-direction: column;
-  margin-left: 10px;
-}
-
-.list .sort-btn {
-  width: 12px;
-  height: 12px;
-  opacity: 0.4;
-  transition: 0.3s;
-  background-color: transparent;
-  border: none;
-  background-size: contain;
-}
-
-.list .sort-btn:hover {
-  cursor: pointer;
-  opacity: 1;
-}
-
-.list .sort-btn.up {
-  background-image: url("img/up.png");
-}
-
-.list .sort-btn.down {
-  background-image: url("img/down.png");
-}
-
-.list .sort-btn.active {
-  opacity: 1;
-}
-
-.list .table-row {
-  display: grid;
-}
-
-.list .status.active {
-  color: #29c000
-}
-
-.list .status.unknown,
-.list .status.inactive {
-  color: #5c5c5c
-}
-
-.btn-select-line button {
-  display: inline-flex;
-  /* or inline-block */
-  width: auto;
-  /* Make sure it's not forcing full width */
-}
-
-form.selected-urls {
-  padding: 20px;
-  border-radius: 10px;
-  background-color: #f7f7f7;
-}
-
-form.selected-urls button {
-  align-self: right;
-}
-
-#list_all .change_page {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin: 5px;
-}
-
-#list_all .change_page p {
-  margin: 0 10px;
-}
-
-#list_all .change_page button {
-  height: 20px;
-}
-
-#list_all .change_page .disabled {
-  background-color: #ccc;
-  color: #999;
-  cursor: not-allowed;
+.quick-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-faint);
   pointer-events: none;
+  display: flex;
+}
+
+.quick-search-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.quick-search input[type="text"] {
+  width: 100%;
+  height: 30px;
+  padding: 0 32px;
+  font-size: 12px;
+}
+
+.quick-search-clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quick-search-clear:hover {
+  background-color: var(--surface-2);
+  color: var(--text);
 }
 
 .btn-line {
   display: flex;
-  flex-direction: row;
+  flex: 1 1 auto;
   justify-content: space-between;
   align-items: center;
-  max-width: 1200px;
-  margin: 0 auto;
-  width: 90%;
+  gap: 8px;
 }
 
 .filter-btn {
   display: flex;
-  justify-content: right;
   align-items: center;
+  gap: 8px;
   /* Push the group to the far right even when it is the only .btn-line child
      (e.g. the left "Select" group is hidden to anonymous users). */
   margin-left: auto;
 }
 
-.filter-btn button {
-  margin: 10px;
-  margin-bottom: 0;
+.btn-line .filter-btn:first-child:not(:last-child) {
+  margin-left: 0;
 }
 
+/* Collapsible panels (filters, add URLs, bulk selection) */
 #list_all .select {
   display: none;
 }
@@ -281,8 +93,8 @@ form.selected-urls button {
   display: block !important;
 }
 
-
-#list_all #filters {
+#list_all #filters,
+#add-url-wrap {
   display: none;
 }
 
@@ -290,60 +102,65 @@ form.selected-urls button {
   display: block !important;
 }
 
-#list_all #filters form {
-  display: flex;
+.active-add {
+  display: flex !important;
   flex-direction: column;
-
 }
 
-#list_all #filters .filter-wrap {
-  width: 100%;
-  display: grid !important;
-  column-gap: 30px;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-}
-
-#list_all #filters .filter-wrap input {
-  width: 100%;
-}
-
-#list_all #filters .filter-submit {
-  align-self: flex-end;
-  margin-top: 20px;
-  width: 200px;
-}
-
+#list_all .active-filter,
 #list_all .active-add,
-#list_all .active-filter {
-  background-color: rgba(255, 255, 255, 0.849);
-  padding: 20px;
+form.selected-urls {
+  margin-top: 12px;
+  padding: 16px;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .filter-label {
   display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
-.filter-input {
-  height: 32px;
-  border-radius: 10px;
-  border-color: #cbcbcb;
-  border-width: 1px;
-  margin-top: 5px;
-  margin-bottom: 10px;
-}
-
-select {
+.filter-input,
+#list_all select {
   height: 30px;
+  margin: 0;
 }
 
-#add-url-wrap {
-  display: none;
-}
-
-.active-add {
-  display: flex !important;
+#list_all #filters form {
+  display: flex;
   flex-direction: column;
+}
+
+#list_all #filters .filter-wrap {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px 20px;
+}
+
+#list_all #filters .filter-wrap input,
+#list_all #filters .filter-wrap select {
+  width: 100%;
+}
+
+/* "Last scanned" from/to dates share one cell */
+#list_all #filters .filter-wrap #scanned_from,
+#list_all #filters .filter-wrap #scanned_to {
+  width: calc(50% - 4px);
+}
+
+#list_all #filters .filter-wrap #scanned_from {
+  margin-right: 4px;
+}
+
+#list_all #filters .filter-submit {
+  align-self: flex-end;
+  margin-top: 16px;
+  min-width: 140px;
 }
 
 #add-url-wrap form {
@@ -352,36 +169,44 @@ select {
   width: 100%;
 }
 
+#add-url-wrap .filter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin-bottom: 2px;
+}
+
 #add-url-wrap .add-url-hint {
-  margin: 2px 0 6px;
+  margin: 0 0 10px;
   padding: 0;
   font-size: 12px;
-  color: #666;
+  color: var(--text-faint);
 }
 
 #add-url-wrap textarea.filter-input {
   width: 100%;
-  min-height: 120px;
+  height: auto;
+  min-height: 140px;
   padding: 8px 10px;
   resize: vertical;
-  font-family: monospace;
-  line-height: 1.5;
+  font-family: var(--mono);
+  line-height: 1.6;
 }
 
 #add-url-wrap button[type="submit"] {
   align-self: flex-end;
-  margin-top: 4px;
+  margin-top: 10px;
 }
 
 /* per-URL result report shown after a bulk add */
 .add-url-results {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 14px;
   font-size: 12px;
 }
 
 .add-url-result {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .add-url-result ul {
@@ -389,98 +214,391 @@ select {
   padding-left: 20px;
   max-height: 120px;
   overflow-y: auto;
-  font-family: monospace;
+  font-family: var(--mono);
+  color: var(--text-2);
 }
 
-.add-url-result.added strong {
-  color: #1c7c1c;
+.add-url-result.added strong   { color: var(--ok); }
+.add-url-result.in-db strong   { color: var(--warn); }
+.add-url-result.invalid strong { color: var(--err); }
+
+/* Bulk selection form */
+form.selected-urls label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
-.add-url-result.in-db strong {
-  color: #8a6d00;
+.btn-select-line {
+  gap: 8px;
+  margin-top: 12px;
 }
 
-.add-url-result.invalid strong {
-  color: #b02a2a;
+.btn-select-line button {
+  display: inline-flex;
+  width: auto;
 }
 
-/* Quick URL search bar at the top of the main page (Figma mockup) */
-.quick-search {
-  position: relative;
-  display: flex;
+#list_all .btn-select-line button.active-select {
+  display: inline-flex !important;
+}
+
+#list_all .select-all.active-select {
+  display: flex !important;
   align-items: center;
-  width: 90%;
-  min-width: 300px;
-  max-width: 1200px;
-  margin: 20px auto 10px;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
-.quick-search-icon {
-  position: absolute;
-  left: 14px;
-  color: #8a8a8a;
-  pointer-events: none;
+/* URL count summary above the table: count, filter state, cancel button */
+.list-summary {
   display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }
 
-.quick-search input {
+.list-summary p {
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.list-summary strong {
+  color: var(--text-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-state {
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text-faint);
+  background-color: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+.filter-state.applied {
+  color: var(--accent-text);
+  background-color: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.btn-style.btn-small {
+  height: 24px;
+  padding: 0 10px;
+}
+
+/* ---------- URL table ---------- */
+.table-wrap {
+  margin-top: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg);
+}
+
+table.list {
   width: 100%;
-  height: 40px;
-  padding: 0 40px 0 40px;
-  border-radius: 20px;
-  border: 1px solid #cbcbcb;
-  background-color: #fff;
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  min-width: 900px;
+  border-collapse: collapse;
+  font-size: 12px;
+  /* set on the table (not the cells) so classification colours win */
+  color: var(--text-muted);
 }
 
-.quick-search input:focus {
-  border-color: #222;
-  box-shadow: 0 0 0 2px rgba(34, 34, 34, 0.08);
+.list thead tr {
+  border-bottom: 1px solid var(--border);
+  background-color: var(--card);
 }
 
-.quick-search-clear {
-  position: absolute;
-  right: 10px;
-  width: 26px;
-  height: 26px;
+.list th {
+  padding: 9px 14px;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.list th p {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+.list th.occurences {
+  text-align: right;
+}
+
+.list th.btn {
+  text-align: right;
+}
+
+.list .sort {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.list .sort-btn {
+  display: block;
+  width: 8px;
+  height: 5px;
+  padding: 0;
   border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: #8a8a8a;
-  font-size: 18px;
-  line-height: 1;
+  /* arrow shape is a mask so its colour follows the theme */
+  background-color: var(--text-muted);
+  -webkit-mask: no-repeat center / contain;
+  mask: no-repeat center / contain;
+  opacity: 0.45;
   cursor: pointer;
+  transition: opacity 0.15s;
 }
 
-.quick-search-clear:hover {
-  background-color: #22222222;
-  color: #222;
+.list .sort-btn:hover {
+  opacity: 1;
 }
 
+.list .sort-btn.up {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M4 0l4 5H0z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M4 0l4 5H0z'/%3E%3C/svg%3E");
+}
+
+.list .sort-btn.down {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z'/%3E%3C/svg%3E");
+}
+
+.list .sort-btn.active {
+  opacity: 1;
+  background-color: var(--accent-text);
+}
+
+.list tbody tr {
+  border-bottom: 1px solid var(--border-soft);
+  transition: background-color 0.15s;
+}
+
+.list tbody tr:last-child {
+  border-bottom: none;
+}
+
+.list tbody tr:nth-child(even) {
+  background-color: var(--row-alt);
+}
+
+.list tbody tr:hover {
+  background-color: var(--row-hover);
+}
+
+.list td {
+  padding: 9px 14px;
+  vertical-align: middle;
+}
+
+/* Every other column shrinks to its content on one line; the URL column takes
+   only the space that is left and truncates long URLs with an ellipsis
+   (full URL in the cell's title tooltip). */
+.list th,
+.list td {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.list th.url,
+.list td.url {
+  width: auto;
+}
+
+.list td.url {
+  max-width: 0;
+  min-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+/* URL coloured by its classification (same colours as the Classification column) */
+.list td.url.malicious    { color: var(--c-malicious); }
+.list td.url.harmless     { color: var(--c-harmless); }
+.list td.url.unreachable  { color: var(--c-unreachable); }
+.list td.url.unclassified { color: var(--c-unclassified); }
+.list td.url.invalid      { color: var(--c-invalid); }
+.list td.url.miner        { color: var(--c-miner); }
+
+/* hovered row: accent colour overrides the classification colour */
+.list tbody tr:hover td.url {
+  color: var(--accent-text);
+}
+
+#list_all .list td.url input.select.active-select {
+  display: inline-block !important;
+  margin: 0 8px 0 0;
+  vertical-align: middle;
+}
+
+.list td.first_seen,
+.list td.last_seen {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.list td.occurences {
+  text-align: right;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.list td.status {
+  font-weight: 600;
+}
+
+.list .status.active {
+  color: var(--ok);
+}
+
+.list .status.unknown,
+.list .status.inactive {
+  color: var(--text-faint);
+}
+
+.list p {
+  margin: 0;
+  padding: 0;
+}
+
+.list .classification p {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.list .classification p::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.list td.note {
+  width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+.list .note img {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  filter: var(--icon-filter);
+  opacity: 0.6;
+  cursor: help;
+}
+
+.list td.reason {
+  color: var(--text-faint);
+}
+
+.list td.btn {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.list td.btn a + a {
+  margin-left: 6px;
+}
+
+.list td.btn .btn-style {
+  height: 24px;
+  padding: 0 10px;
+}
+
+/* Pagination */
+#list_all .change_page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0 0;
+}
+
+#list_all .change_page p {
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+#list_all .change_page .disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Add-URL result banner */
 .add-response {
   /* In normal flow (not absolutely positioned) so the banner never overlaps
      the quick search bar sitting at the top of the page. */
-  width: 400px;
-  max-width: 90%;
-  height: 50px;
-  margin: 15px auto 5px;
-  color: white;
+  width: 480px;
+  max-width: calc(100% - 32px);
+  margin: 14px auto 0;
   text-align: center;
-  border-radius: 25px;
+  border: 1px solid;
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .add-response p {
   margin: 0;
-  padding: 0;
-  line-height: 50px;
+  padding: 10px 14px;
 }
 
 .add-response.fail {
-  background-color: rgba(228, 104, 104, 0.849);
+  color: var(--err);
+  background-color: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.25);
 }
 
 .add-response.success {
-  background-color: rgba(104, 228, 104, 0.849);
+  color: var(--ok);
+  background-color: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+@media screen and (max-width: 700px) {
+  #list_all {
+    padding: 0 16px;
+  }
+
+  .quick-search {
+    max-width: none;
+  }
+
+  .btn-line,
+  .filter-btn {
+    flex-wrap: wrap;
+  }
 }

@@ -1,54 +1,84 @@
-.edit{
-    margin: 0 auto;
+/* ---------- Edit / bulk edit pages (Figma mockup edit panel, dark theme) ---------- */
+.edit {
     width: 100%;
-    max-width: 1200px;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 20px 0;
 }
 
 .edit .edit-wrap {
-    margin: 0 50px;
+    max-width: 760px;
+    padding: 20px;
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
 }
 
 .edit h2 {
-    display: flex;
-    align-items: top;
-}
-
-.edit label{
     display: block;
+    margin: 0 0 16px;
+    font-size: 14px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
 }
 
 .edit label {
-    margin-top: 10px;
-    margin-bottom: 3px;
+    display: block;
+    margin-top: 14px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--text-faint);
 }
 
-.edit input[type="submit"], .edit .back-btn {
-    width: 100px;
-    height: 30px;
-    margin-top: 10px;
-    display: block;
+.edit form > label:first-child {
+    margin-top: 0;
 }
 
 .edit input[type="text"] {
     height: 30px;
-    width: 400px;
+    width: 100%;
+    max-width: 480px;
 }
 
-.edit select{
+.edit select {
     height: 30px;
+    min-width: 200px;
+}
+
+.edit input[type="submit"],
+.edit .back-btn {
+    min-width: 90px;
+    margin-top: 18px;
+}
+
+.edit input[type="submit"] {
+    display: flex;
 }
 
 .edit .form-wrap {
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.edit .form-wrap form {
+    flex: 1 1 320px;
 }
 
 .edit .back-buttons {
     display: flex;
     flex-direction: row;
+    gap: 8px;
 }
 
-.edit .back-btn {
-    margin-left: 10px;
+@media screen and (max-width: 700px) {
+    .edit {
+        padding: 16px 16px 0;
+    }
+
+    .edit .edit-wrap {
+        padding: 16px;
+    }
 }

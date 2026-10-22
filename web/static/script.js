@@ -267,3 +267,13 @@ document.addEventListener("click", function (event) {
         if (!menu.contains(event.target)) menu.removeAttribute("open");
     });
 });
+
+// Header light/dark switch; the choice is remembered in this browser.
+function toggleTheme() {
+    var root = document.documentElement;
+    var theme = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+    root.setAttribute("data-theme", theme);
+    try {
+        localStorage.setItem("theme", theme);
+    } catch (e) {}
+}
