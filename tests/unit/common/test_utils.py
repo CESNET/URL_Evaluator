@@ -95,6 +95,16 @@ def test_process_new_session_ddos_target_is_harmless(db, config):
     assert db.execute("SELECT actor FROM classification_history").fetchone() == ("session-ddos",)
 
 
+def test_process_new_session_ddos_target_recorded_once(db, config):
+    session = "; ".join(["wget http://victim.test/"] * 11)
+
+    process_new_session(db, config, session, None, "2026-01-01T10:00:00Z", "Warden", None)
+    process_new_session(db, config, session, None, "2026-01-02T10:00:00Z", "Warden", None)
+    process_new_session(db, config, session + "; id", None, "2026-01-03T10:00:00Z", "Warden", None)
+
+    assert db.execute("SELECT COUNT(*) FROM classification_history").fetchone()[0] == 1
+
+
 def test_process_new_session_domain_flood_is_deleted(make_config, db):
     config = make_config(ddos_threshold={"same_url_single_session": 10, "same_domain_single_session": 3,
                                          "same_domain_all_sessions": 500})
