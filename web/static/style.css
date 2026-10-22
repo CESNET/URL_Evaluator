@@ -160,6 +160,15 @@ header {
   white-space: nowrap;
 }
 
+.header-wrapper h2 a.home-link {
+  color: inherit;
+  transition: color 0.15s;
+}
+
+.header-wrapper h2 a.home-link:hover {
+  color: var(--accent-text);
+}
+
 header nav {
   margin-right: auto;
 }
@@ -206,6 +215,7 @@ h2, h3 {
 /* Form controls */
 input[type="text"],
 input[type="date"],
+input[type="password"],
 input:not([type]),
 select,
 textarea {
@@ -230,6 +240,7 @@ textarea::placeholder {
 
 input[type="text"]:focus,
 input[type="date"]:focus,
+input[type="password"]:focus,
 input:not([type]):focus,
 select:focus,
 textarea:focus {
@@ -267,6 +278,7 @@ input[type="checkbox"] {
 
 /* Primary action (mockup cyan "Add URLs" / "Apply") */
 .add-btn,
+.btn-primary,
 .filter-submit,
 #add-url-wrap button[type="submit"],
 .edit input[type="submit"],
@@ -278,6 +290,7 @@ input[type="checkbox"] {
 }
 
 .add-btn:hover:enabled,
+.btn-primary:hover:enabled,
 .filter-submit:hover:enabled,
 #add-url-wrap button[type="submit"]:hover:enabled,
 .edit input[type="submit"]:hover:enabled,
@@ -388,6 +401,89 @@ input[type="checkbox"] {
 .recent-urls li a:hover {
   background-color: var(--surface);
   color: var(--accent-text);
+}
+
+/* Local development Sign in / Sign out (python web/main.py only) */
+.dev-auth-form {
+  margin: 0;
+}
+
+.dev-login {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 0;
+  color: var(--text);
+  background-color: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.dev-login::backdrop {
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.dev-login form {
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px 20px;
+}
+
+.dev-login-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 -20px 14px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dev-login-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dev-login-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dev-login-close:hover {
+  color: var(--text);
+}
+
+.dev-login-note {
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--warn);
+  background-color: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: var(--radius);
+}
+
+.dev-login label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.dev-login input {
+  height: 30px;
+  margin-bottom: 14px;
+}
+
+.dev-login-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* Light / dark switch in the header (shows the icon of the theme it switches to) */

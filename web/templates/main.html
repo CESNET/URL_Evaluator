@@ -26,10 +26,8 @@
   <div>
     <header>
       <div class="header-wrapper">
-        {# Temporarily disabled: title link back to the main page (clears filters).
-        <h2><a class="clear-page" href="{{ url_for('list_all', page=1, clear_filters='True') }}">URL Evaluator</a></h2>
-        #}
-        <h2>URL Evaluator</h2>
+        {# Title links back to the main page (clears filters). #}
+        <h2><a class="clear-page home-link" href="{{ url_for('list_all', page=1, clear_filters='True') }}">URL Evaluator</a></h2>
         <nav>
           <ul>
             <li><a
@@ -46,7 +44,7 @@
         <div class="header-user">
           {% if recent_urls %}
           <details class="recent-urls">
-            <summary>Recent ({{ recent_urls|length }})</summary>
+            <summary>Recent displayed URLs ({{ recent_urls|length }})</summary>
             <ul>
               {% for r_url, r_visited in recent_urls %}
               <li><a href="{{ url_for('detail', url=r_url) }}" title="{{ r_url }} &ndash; visited {{ r_visited|fmt_ts }}">{{ r_url }}</a></li>
@@ -55,6 +53,16 @@
           </details>
           {% endif %}
           <span>User: {{user}}</span>
+          {% if dev_login %}
+          {# Local development login (python web/main.py only) #}
+          {% if dev_user %}
+          <form class="dev-auth-form" method="post" action="{{ url_for('dev_logout') }}">
+            <button type="submit" class="btn-style btn-small">Sign out</button>
+          </form>
+          {% elif header_is_anon %}
+          <button type="button" class="btn-style btn-small btn-primary" onclick="document.getElementById('dev-login-dialog').showModal()">Sign in</button>
+          {% endif %}
+          {% endif %}
           <button type="button" class="theme-toggle" onclick="toggleTheme()" title="Switch light / dark mode" aria-label="Switch light / dark mode">
             <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>
             <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
@@ -62,6 +70,25 @@
         </div>
       </div>
     </header>
+    {% if dev_login and header_is_anon %}
+    <dialog id="dev-login-dialog" class="dev-login">
+      <form method="post" action="{{ url_for('dev_login') }}">
+        <div class="dev-login-head">
+          <h3>Sign in</h3>
+          <button type="button" class="dev-login-close" onclick="this.closest('dialog').close()" aria-label="Close">&times;</button>
+        </div>
+        <p class="dev-login-note">Local testing only &ndash; any username signs you in, the password is not checked.</p>
+        <label for="dev-login-username">Username</label>
+        <input type="text" id="dev-login-username" name="username" required autocomplete="username" placeholder="analyst@cesnet.cz">
+        <label for="dev-login-password">Password</label>
+        <input type="password" id="dev-login-password" name="password" autocomplete="current-password">
+        <div class="dev-login-actions">
+          <button type="button" class="btn-style" onclick="this.closest('dialog').close()">Cancel</button>
+          <button type="submit" class="btn-style btn-primary">Sign in</button>
+        </div>
+      </form>
+    </dialog>
+    {% endif %}
     <section id="body">
       {% block content %}
       {% endblock %}

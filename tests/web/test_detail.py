@@ -111,7 +111,7 @@ def test_header_lists_recently_visited_urls(web_client, db):
     analyst = web_client.get("/detail", query_string={"url": other}, environ_base=ANALYST).get_data(as_text=True)
     anonymous = web_client.get("/detail", query_string={"url": other}).get_data(as_text=True)
 
-    assert "Recent (2)" in analyst
+    assert "Recent displayed URLs (2)" in analyst
     assert analyst.index(">http://other.test/b.sh</a>") < analyst.index(f">{URL}</a>")  # newest first
     assert "recent-urls" not in anonymous
 

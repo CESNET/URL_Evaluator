@@ -81,6 +81,9 @@ except Exception as e:
 # Init flask
 application = app = Flask(__name__)
 app.secret_key = config.flask_secret_key
+# Local "Sign in" popup for testing the authenticated GUI; enabled only by the
+# development server below (never under mod_wsgi in production).
+app.config["DEV_LOGIN"] = False
 
 
 @app.template_filter('human_bytes')
@@ -162,6 +165,9 @@ def get_user(environ):
                f"({environ.get('OIDC_CLAIM_name').encode('latin1').decode('utf-8')})"
     elif "REMOTE_USER" in environ:
         user = environ['REMOTE_USER']
+    elif app.config["DEV_LOGIN"] and flask.has_request_context() and flask.session.get("dev_user"):
+        # Local development login (see dev_login below)
+        user = flask.session["dev_user"]
     else:
         user = ANONYMOUS_USER
     return user
@@ -212,6 +218,36 @@ def recent_urls(db, user):
         """, (user, RECENT_URLS_LIMIT)).fetchall()
     except Exception:
         return []
+
+
+@app.context_processor
+def inject_dev_login():
+    """Header state for the local development Sign in / Sign out button."""
+    if not app.config["DEV_LOGIN"]:
+        return {"dev_login": False}
+    return {"dev_login": True,
+            "dev_user": flask.session.get("dev_user"),
+            "header_is_anon": is_anonymous(get_user(flask.request.environ))}
+
+
+@app.route('/dev/login', methods=['POST'])
+def dev_login():
+    """Local testing only: sign in as whatever name was typed (no password check)."""
+    if not app.config["DEV_LOGIN"]:
+        abort(404)
+    username = flask.request.form.get("username", "").strip()
+    if username:
+        flask.session["dev_user"] = username
+        logger.warning(f"DEV MODE: signed in as '{username}' (no password check)")
+    return redirect(flask.request.referrer or url_for('list_all'))
+
+
+@app.route('/dev/logout', methods=['POST'])
+def dev_logout():
+    if not app.config["DEV_LOGIN"]:
+        abort(404)
+    flask.session.pop("dev_user", None)
+    return redirect(flask.request.referrer or url_for('list_all'))
 
 
 @app.context_processor
@@ -943,4 +979,6 @@ def sandbox_submit(content_id):
 
 
 if __name__ == '__main__':
+    app.config["DEV_LOGIN"] = True
+    logger.warning("DEV MODE: local Sign in popup enabled (any name is accepted)")
     app.run(host='127.0.0.1', port=5000, debug=True)

@@ -231,6 +231,19 @@ form.selected-urls label {
   font-weight: 500;
 }
 
+/* Nothing selected yet: show a hint instead of chips and disable the actions */
+.selected-urls-wrap:not(:has(.selected-url))::before {
+  content: "Select at least one URL";
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+form.selected-urls:not(:has(.selected-url)) .btn-select-line button {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .btn-select-line {
   gap: 8px;
   margin-top: 12px;
