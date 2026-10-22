@@ -16,6 +16,17 @@ from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, get_domain
 
+logger = logging.getLogger("honeynetasia2evaluator.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+
+
+def init(cfg):
+    """Set the module state from `cfg`. Called by __main__ and by tests."""
+    global config
+    config = cfg
+
 
 def honeynetasia2evaluator():
     logger.info("Job started")
@@ -43,6 +54,10 @@ def honeynetasia2evaluator():
                     occurrences = urls.occurrences + 1;
             """, (url, current_date, current_date, get_domain(url))).rowcount
             db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "HoneyNet.Asia"))
+            db.execute(
+                "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+                (url, "HoneyNet.Asia", None, None, current_date)
+            )
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")
 
@@ -64,14 +79,13 @@ if __name__ == "__main__":
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("honeynetasia2evaluator.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)

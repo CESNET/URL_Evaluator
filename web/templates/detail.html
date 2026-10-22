@@ -1,28 +1,63 @@
 {% extends "main.html" %}
 
 {% block content %}
-<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification, 
-    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated, 
-    12. file_mime_type, 13. content_size, 14. threat_label 
+<!-- 0. url, 1. first, 2. last, 3. src, 4. hash, 5. classification,
+    6. reason, 7. note, 8. reported, 9. occurrences, 10. vt_stats, 11. evaluated,
+    12. file_mime_type, 13. content_size, 14. threat_label
     15. status, 16. active_last, 17. last_edit-->
 <div class="detail">
+    <div class="buttons top-buttons">
+        <!-- Same quick search as on the list page; results open in the URL list -->
+        <form class="quick-search" action="{{ url_for('list_all', page=1) }}" method="get" role="search">
+            {% if show %}<input type="hidden" name="show" value="{{ show }}">{% endif %}
+            <span class="quick-search-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </span>
+            <input type="text" id="quick-search" name="q" placeholder="Search URL or content SHA-256…" autocomplete="off">
+        </form>
+        <button class="back-btn btn-style" onclick="location.href='{{ url_for('list_all', show=show)}}'">Back</button>
+    </div>
     <div class="wrap">
         <div class="header-wrap">
-            {% if url["status"] == 'active' %} 
-                <svg height="20" width="20">
-                    <circle cx="5" cy="10" r="5" fill="green" />
-                </svg>
-            {% endif %}
             <h2
                 class="classification {{url.classification}}">
                 {{ url.url }}</h2>
-            
+            {% if url.classification %}
+            <span class="class-badge class-{{ url.classification }}">{{ url.classification }}</span>
+            {% endif %}
+            {% if url["status"] %}
+            <span class="status-badge status-{{ url["status"] }}"
+                {% if url["status"] == 'inactive' and inactive_for %}title="inactive for {{ inactive_for }} days"{% endif %}>{{ url["status"] }}</span>
+            {% endif %}
+
             {% if url.evaluated == 'no' %} <p class="to-be-evaluated">to be evaluated</p>{% endif %}
             {% if url.eval_later == 'yes' %} <p class="to-be-evaluated">URL will be re-evaluated after VirusTotal API limit is reset</p>{% endif %}
+            {% if not is_anon %}
             <button title="Edit" class="edit_btn"
                 onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
+            {% endif %}
         </div>
 
+        <!-- Tab navigation (layout per Figma, restyled to app light theme) -->
+        <nav class="detail-tabs">
+            <a class="detail-tab {% if tab == 'overview' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='overview') }}">Overview</a>
+            <a class="detail-tab {% if tab == 'content' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='content') }}">Content
+                {% if tab_counts.content %}<span class="tab-badge">{{ tab_counts.content }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'sources' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">Sources
+                {% if tab_counts.sources %}<span class="tab-badge">{{ tab_counts.sources }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'sandbox' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">Sandbox
+                {% if tab_counts.sandbox %}<span class="tab-badge">{{ tab_counts.sandbox }}</span>{% endif %}</a>
+            <a class="detail-tab {% if tab == 'class_history' %}active{% endif %}"
+               href="{{ url_for('detail', url=url.url, show=show, tab='class_history') }}">Class. History
+                {% if tab_counts.class_history %}<span class="tab-badge">{{ tab_counts.class_history }}</span>{% endif %}</a>
+        </nav>
+
+        {# ============ TAB: OVERVIEW (existing detail content, unchanged) ============ #}
+        {% if tab == 'overview' %}
         <div class="content">
         <table class="info">
             <tbody>
@@ -69,11 +104,23 @@
                     <td>Source</td>
                     <td>{{ url.src | join(', ') }}</td>
                 </tr>
+                <tr>
+                    <td>Derived from</td>
+                    <td>
+                        {% if derived_from and derived_from_in_db %}
+                            <a class="derived-link" href="{{ url_for('detail', url=derived_from, show=show) }}" title="URL Evaluator details">{{ derived_from }}</a>
+                        {% elif derived_from %}
+                            <span class="derived-link disabled">{{ derived_from }}</span>
+                        {% else %}
+                            <span class="derived-none">&mdash;</span>
+                        {% endif %}
+                    </td>
+                </tr>
 
                 {% if url.hash %}
                 <tr>
                     <td>Hash</td>
-                    
+
                     <td>
                         <div class="reason-link">
                             <p>{{ url.hash }}</p>
@@ -89,7 +136,7 @@
                         <p>{{ url.vt_stats }}</p>
                             {% if link %}
                                 <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
-                            {% endif %} 
+                            {% endif %}
                         </div></td>
                 </tr>
                 {% endif %}
@@ -141,7 +188,7 @@
                         <a class="ip" href="https://nerd.cesnet.cz/nerd/ip/{{ url.ip }}" target="_blank" title="NERD"><img class="nerd-img" src="{{ url_for("static", filename="img/nerd.png") }}" alt="NERD">
                             {{ url.ip }}
                         </a>
-                        <!-- <p></p> -->
+                        <a class="nerd2-link" href="https://nerd2.cesnet.cz/ip/{{ url.ip }}" target="_blank" rel="noopener noreferrer" title="NERD2 (beta)">NERD2 BETA</a>
                     </td>
                 </tr>
                 {% endif %}
@@ -191,12 +238,436 @@
             </dd>
             </dl>
         {% endif %}
-
         </div>
+        {% endif %}
 
-    </div> 
+        {# ============ TAB: SOURCES (observations aggregated per honeynet) ============ #}
+        {% if tab == 'sources' %}
+        <div class="content">
+            {% if observations %}
+            <table class="sources-table">
+                <thead>
+                    <tr>
+                        <th>Honeynet</th>
+                        <th>First observed</th>
+                        <th>Last observed</th>
+                        <th>Occurrences</th>
+                        <th>Derived from</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for obs in observations %}
+                    <tr>
+                        <td><span class="honeynet-chip">{{ obs[0] }}</span></td>
+                        <td>{{ obs[1][:10] }}</td>
+                        <td>{{ obs[2][:10] }}</td>
+                        <td class="occurrences">{{ obs[3] }}</td>
+                        <td>
+                            {% if derived_from and derived_from_in_db %}
+                                <a class="derived-link" href="{{ url_for('detail', url=derived_from, show=show) }}" title="URL Evaluator details">{{ derived_from }}</a>
+                            {% elif derived_from %}
+                                <span class="derived-link disabled">{{ derived_from }}</span>
+                            {% else %}
+                                <span class="derived-none">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="tab-empty">No observations recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# ============ TAB: CONTENT (download observations / versions per Figma) ============ #}
+        {% if tab == 'content' %}
+        <div class="content content-tab">
+            {% if content_versions %}
+            <div class="content-meta">
+                <p class="content-meta-note">Content is polled daily. Identical responses are grouped &mdash; only distinct versions are shown.</p>
+                {% if content_range_start and content_range_end %}
+                <p class="content-range">{{ content_range_start }} &nbsp;&ndash;&nbsp; {{ content_range_end }}</p>
+                {% endif %}
+            </div>
+
+            {# Render newest version first (mockup shows Version 2 above Version 1) #}
+            {% for v in content_versions | reverse %}
+            <section class="version-card {% if v.changed %}changed{% endif %}">
+                <header class="version-card-head">
+                    <div class="version-card-title">
+                        <h3>Version {{ v.version }}</h3>
+                        {% if v.changed %}<span class="badge-changed">content changed</span>{% endif %}
+                        {% if not v.content_id %}<span class="badge-no-content">no content</span>{% endif %}
+                    </div>
+                    {% if v.status_code %}<span class="version-status">HTTP {{ v.status_code }}</span>{% endif %}
+                </header>
+
+                <table class="version-card-body">
+                    <tbody>
+                        <tr>
+                            <td>Observed</td>
+                            <td>{{ v.first_fetched|fmt_ts }} &rarr; {{ v.last_fetched|fmt_ts }}</td>
+                        </tr>
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Fetch count</td>
+                            <td>{{ v.fetch_count }}&times; confirmed identical</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td>Result</td>
+                            <td>
+                                <span class="fetch-failure">{{ v.failure }}</span>
+                                <div class="content-type-meta">Nothing was stored, so there is no file to download or analyse.</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Fetch count</td>
+                            <td>{{ v.fetch_count }}&times; {{ 'attempt' if v.fetch_count == 1 else 'attempts' }} without content</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.source_ip %}
+                        <tr>
+                            <td>{{ 'Downloaded from' if v.content_id else 'Host IP' }}</td>
+                            <td>{{ v.source_ip }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.sha256 %}
+                        <tr>
+                            <td>SHA-256</td>
+                            <td class="mono">{{ v.sha256 }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.file_size is not none %}
+                        <tr>
+                            <td>Size</td>
+                            <td>{{ v.file_size|human_bytes }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Content type</td>
+                            <td>
+                                {% set ct = v.content_type %}
+                                {% if ct %}
+                                <span class="content-type-badge {{ ct.severity }}">{{ ct.category_label }}</span>
+                                <span class="sandbox-sep">&middot;</span>{{ ct.description or ct.label }}
+                                <div class="content-type-meta">
+                                    <span title="Magika content type label">{{ ct.label }}</span>
+                                    {%- if ct.mime_type %} &middot; <span class="mono">{{ ct.mime_type }}</span>{% endif %}
+                                    {%- if ct.score is not none %} &middot; confidence {{ (ct.score * 100)|round|int }}%{% endif %}
+                                    &middot; detected by Magika (static, file not executed)
+                                </div>
+                                {% else %}
+                                <span class="derived-none">not classified</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td>Sandbox</td>
+                            <td>
+                                {% set ha = ha_lookup_by_content.get(v.content_id) if v.content_id else none %}
+                                {% if ha and ha.tested %}
+                                <span class="ha-verdict {{ (((ha.overview.verdict if ha.overview else '')) or 'unknown')|replace(' ', '-') }}">{{ (ha.overview.verdict if ha.overview else '') or 'analysed' }}</span>
+                                <span class="sandbox-sep">&middot;</span>
+                                <span class="sandbox-name">Hybrid Analysis</span>
+                                <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">details &rarr;</a>
+                                {% elif ha and not ha.error %}
+                                <span class="sandbox-name">Not analysed on Hybrid Analysis</span>
+                                {% elif ha %}
+                                <span class="sandbox-name">Hybrid Analysis lookup failed ({{ ha.error or ('HTTP ' ~ ha.http_status) }})</span>
+                                {% elif not v.content_id %}
+                                <span class="derived-none">n/a (no content)</span>
+                                {% else %}
+                                <span class="derived-none">not checked</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if v.content_id %}
+                        <tr>
+                            <td>Download</td>
+                            <td>
+                                <a class="download-link mono" href="{{ url_for('download_content', content_id=v.content_id) }}">
+                                    &#8681; {{ (v.sha256 or 'sample')[:32] }}.bin
+                                </a>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if v.response_headers %}
+                        <tr>
+                            <td>HTTP headers</td>
+                            <td class="headers mono">
+                                {% for k, val in v.response_headers.items() %}
+                                <div><span class="header-key">{{ k }}:</span> {{ val }}</div>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </section>
+            {% endfor %}
+            {% else %}
+            <p class="tab-empty">No downloaded content recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# ============ TAB: SANDBOX (Hybrid Analysis hash lookup per content version) ============ #}
+        {% if tab == 'sandbox' %}
+        <div class="content content-tab">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <p class="flash {{ category }}">{{ message }}</p>
+            {% endfor %}
+            {% endwith %}
+            {% if sandbox_entries %}
+            <div class="content-meta">
+                <p class="content-meta-note">Every time a new content is found on URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is not automatically submitted. It can be submitted for analysis manually by a logged-in analyst.</p>
+            </div>
+
+            {% for e in sandbox_entries %}
+            {% set ha = e.ha %}
+            <section class="version-card">
+                <header class="version-card-head">
+                    <div class="version-card-title">
+                        <h3>Version {{ e.version }}</h3>
+                        {% if ha and ha.tested %}
+                        <span class="ha-badge tested">already analysed</span>
+                        {% elif ha and not ha.error %}
+                        <span class="ha-badge not-tested">not analysed yet</span>
+                        {% elif ha %}
+                        <span class="ha-badge error">lookup failed</span>
+                        {% else %}
+                        <span class="ha-badge unknown">not checked</span>
+                        {% endif %}
+                        {% if e.fetch_plan %}
+                        <span class="ha-badge pending">waiting for report</span>
+                        {% elif e.submission and e.submission.status != 'error' %}
+                        <span class="ha-badge pending">submitted</span>
+                        {% endif %}
+                    </div>
+                    {% if ha and ha.http_status %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}
+                </header>
+
+                <table class="version-card-body">
+                    <tbody>
+                        <tr>
+                            <td>SHA-256</td>
+                            <td class="mono">
+                                {{ e.sha256 }}
+                                <button type="button" class="copy-btn" data-copy="{{ e.sha256 }}" onclick="copyToClipboard(this)" title="Copy SHA-256" aria-label="Copy SHA-256">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                                </button>
+                            </td>
+                        </tr>
+                        {% if not ha %}
+                        <tr>
+                            <td>Hybrid Analysis</td>
+                            <td>This content has not been looked up yet (lookup disabled or not run since the content was downloaded).</td>
+                        </tr>
+                        {% else %}
+                        {% if ha.tested %}
+                        {% set ov = ha.overview or {} %}
+                        {% if ov.type or ov.last_file_name %}
+                        <tr>
+                            <td>File</td>
+                            <td>{{ ov.last_file_name or '' }}{% if ov.type %} <span class="derived-none">({{ ov.type }})</span>{% endif %}</td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td>Verdict</td>
+                            <td>
+                                <span class="ha-verdict {{ ((ov.verdict) or 'unknown')|replace(' ', '-') }}">{{ ov.verdict or 'n/a' }}</span>
+                                {% if ov.threat_score is defined and ov.threat_score is not none %}
+                                <span class="sandbox-sep">&middot;</span>threat score <strong>{{ ov.threat_score }}</strong>/100
+                                {% endif %}
+                                <a class="sandbox-report" href="{{ ha.sample_url or ('https://hybrid-analysis.com/sample/' ~ e.sha256) }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
+                            </td>
+                        </tr>
+                        {% if ov.multiscan_result is defined and ov.multiscan_result is not none %}
+                        <tr>
+                            <td>AV multiscan</td>
+                            <td>{{ ov.multiscan_result }}% detection</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.vx_family %}
+                        <tr>
+                            <td>Malware family</td>
+                            <td>{{ ov.vx_family }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.tags %}
+                        <tr>
+                            <td>Tags</td>
+                            <td>{% for t in ov.tags %}<span class="honeynet-chip">{{ t }}</span> {% endfor %}</td>
+                        </tr>
+                        {% endif %}
+                        {% if ov.analysis_start_time or ov.submitted_at %}
+                        <tr>
+                            <td>Analysed</td>
+                            <td>{{ (ov.analysis_start_time or ov.submitted_at)|fmt_ts }}</td>
+                        </tr>
+                        {% endif %}
+                        {# Entries built from Overview.reports carry only a job ID -> skip them. #}
+                        {% set reports = [] %}
+                        {% for r in ha.reports or [] if r.environment_description or r.environment_id or r.state or r.verdict %}{% set _ = reports.append(r) %}{% endfor %}
+                        {% if reports %}
+                        <tr>
+                            <td>Reports</td>
+                            <td>
+                                <table class="sources-table ha-reports">
+                                    <thead>
+                                        <tr><th>Environment</th><th>State</th><th>Verdict</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for r in reports %}
+                                        <tr>
+                                            <td>{{ r.environment_description or r.environment_id or '—' }}</td>
+                                            <td>{{ r.state or '—' }}{% if r.error_type %} <span class="ha-error">({{ r.error_type }})</span>{% endif %}</td>
+                                            <td><span class="ha-verdict {{ ((r.verdict) or 'unknown')|replace(' ', '-') }}">{{ r.verdict or '—' }}</span></td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endif %}
+                        <tr>
+                            <td>Checked</td>
+                            <td>{{ ha.checked_at|fmt_ts }}</td>
+                        </tr>
+                        <tr>
+                            <td>Response</td>
+                            {% if ha.tested %}
+                            <td>SHA-256 already known to Hybrid Analysis (HTTP {{ ha.http_status }}).</td>
+                            {% elif ha.error %}
+                            <td class="ha-error">Lookup failed: {{ ha.error }}</td>
+                            {% else %}
+                            <td>SHA-256 not known to Hybrid Analysis (HTTP {{ ha.http_status }}) &ndash; no report exists for this hash.</td>
+                            {% endif %}
+                        </tr>
+                        {% if ha.last_error %}
+                        <tr>
+                            <td>Last attempt</td>
+                            <td class="ha-error">{{ ha.last_error.checked_at|fmt_ts }} &ndash; {{ ha.last_error.error or ('HTTP ' ~ ha.last_error.http_status) }} (showing the previous successful result)</td>
+                        </tr>
+                        {% endif %}
+                        {% endif %}
+                        {% if e.submission %}
+                        {% set sub = e.ha_submission or {} %}
+                        <tr>
+                            <td>Submission</td>
+                            <td>
+                                <span class="ha-badge {{ e.submission.status }}">{{ e.submission.status }}</span>
+                                {{ e.submission.submitted_at|fmt_ts }} by {{ e.submission.submitted_by or 'analyst' }}
+                                {% if sub.environment_id %}<span class="sandbox-sep">&middot;</span>{{ ha_environments.get(sub.environment_id, sub.environment_id) }}{% endif %}
+                                {% if sub.job_id %}<span class="sandbox-sep">&middot;</span>job <span class="mono">{{ sub.job_id }}</span>{% endif %}
+                                {% if e.submission.status == 'error' and sub.error %}<span class="sandbox-sep">&middot;</span><span class="ha-error">{{ sub.error }}</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% set plan = e.fetch_plan %}
+                        {% if plan or e.submission.last_fetch_at %}
+                        <tr>
+                            <td>Result fetch</td>
+                            <td>
+                                {% if plan and plan.waiting %}
+                                <span class="ha-fetch-wait" aria-hidden="true"></span>
+                                Waiting for the analysis &mdash; scheduled fetch {{ plan.attempt }}/{{ plan.attempts_total }} at
+                                <strong>{{ plan.next_fetch_at|fmt_ts }}</strong>
+                                <span class="derived-none">(GET /overview/{sha256} {{ plan.schedule }} min after the submission)</span>
+                                <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">refresh &rarr;</a>
+                                {% elif plan %}
+                                No report after the {{ plan.attempts_total }} scheduled fetches ({{ plan.schedule }} min after the submission)
+                                &mdash; the next daily activity scan fetches it.
+                                {% elif e.submission.status == 'done' %}
+                                Report fetched {{ e.submission.last_fetch_at|fmt_ts }}{% if e.submission.verdict %}<span class="sandbox-sep">&middot;</span>verdict <strong>{{ e.submission.verdict }}</strong>{% endif %}
+                                {% endif %}
+                                {% if plan and e.submission.last_fetch_at %}
+                                <br><span class="derived-none">Last fetch {{ e.submission.last_fetch_at|fmt_ts }}: report not ready yet.</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endif %}
+                        {% if e.can_submit %}
+                        <tr>
+                            <td>Submit</td>
+                            <td>
+                                <form class="ha-submit-form" method="post"
+                                      action="{{ url_for('sandbox_submit', content_id=e.content_id) }}"
+                                      onsubmit="return confirm('Submit this sample to Hybrid Analysis? The sample and its report will be public.');">
+                                    <input type="hidden" name="url" value="{{ url.url }}">
+                                    <input type="hidden" name="show" value="{{ show or '' }}">
+                                    <select name="environment_id" title="Analysis environment">
+                                        {% for env_id, env_name in ha_environments.items() %}
+                                        <option value="{{ env_id }}" {% if env_id == ha_default_environment %}selected{% endif %}>{{ env_name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="submit" class="btn-style ha-submit-btn">Submit to Hybrid Analysis</button>
+                                </form>
+                                <p class="ha-submit-note">POST /submit/file &mdash; submitted samples and their reports are public on Hybrid Analysis.</p>
+                            </td>
+                        </tr>
+                        {% elif ha_submit_enabled and not e.submission and not (ha and ha.tested) %}
+                        <tr>
+                            <td>Submit</td>
+                            <td class="derived-none">Available once the hash lookup (GET /overview/{sha256}) returned HTTP 404 and the sample file is stored.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </section>
+            {% endfor %}
+            {% else %}
+            <p class="tab-empty">No downloaded content recorded for this URL, nothing to look up in a sandbox.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# ============ TAB: CLASSIFICATION HISTORY (timeline per Figma) ============ #}
+        {% if tab == 'class_history' %}
+        <div class="content">
+            {% if class_history %}
+            <ul class="class-history">
+                {% for entry in class_history %}
+                {# entry: 0 classification, 1 reason, 2 note, 3 actor, 4 created_at #}
+                <li class="class-history-item classification-{{ entry[0] }}">
+                    <span class="ch-node" aria-hidden="true"></span>
+                    <div class="ch-body">
+                        <div class="ch-head">
+                            {# For old db data, which not store time of evaluation by system
+                                display only date instead zero time placeholder #}
+                            {% set ch_ts = entry[4] or '' %}
+                            {% if ch_ts.endswith('00:00:00') %}
+                                <span class="ch-time">{{ ch_ts[:10] }}</span>
+                            {% else %}
+                                <span class="ch-time">{{ ch_ts }} UTC</span>
+                            {% endif %}
+                            <span class="ch-class"><span class="ch-dot"></span>{{ entry[0] }}</span>
+                            {% if entry[1] %}<span class="ch-reason">{{ entry[1] }}</span>{% endif %}
+                            <span class="ch-actor">{{ entry[3] }}</span>
+                        </div>
+                        {% if entry[2] %}
+                        <p class="ch-note">{{ entry[2] }}</p>
+                        {% endif %}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="tab-empty">No classification history recorded for this URL yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div>
     <div class="buttons">
-        {% if url.evaluated == 'yes' %}
+        {% if url.evaluated == 'yes' and not is_anon %}
         <form method="post">
             <input type="submit" class="reevaluate-btn btn-style" value="Re-evaluate">
         </form>

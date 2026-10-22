@@ -14,6 +14,17 @@ from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import process_new_session
 
+logger = logging.getLogger("tpot2evaluator.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+
+
+def init(cfg):
+    """Set the module state from `cfg`. Called by __main__ and by tests."""
+    global config
+    config = cfg
+
 
 def tpot2evaluator():
     logger.info("Job started")
@@ -32,7 +43,7 @@ def tpot2evaluator():
         with SQLiteWrapper(config.db_path) as db:
             for session in response.json():
                 logger.debug(f"Looking for new URLs in '{session['input']}'")
-                if new_urls := process_new_session(db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", None):
+                if new_urls := process_new_session(db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", None, "GEANT T-Pot"):
                     logger.info(f"Discovered {len(new_urls)} new URLs: {new_urls}")
     except Exception as e:
         logger.error(f"Error while processing sessions: {type(e).__name__}: {e}")
@@ -56,14 +67,13 @@ if __name__ == "__main__":
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("tpot2evaluator.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {type(e).__name__}: {e}")
         sys.exit(1)

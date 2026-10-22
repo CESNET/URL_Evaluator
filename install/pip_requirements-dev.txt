@@ -1,0 +1,7 @@
+# Test dependencies (install on top of pip_requirements.txt)
+pytest
+pytest-cov
+responses
+pytest-httpserver
+freezegun
+pytest-socket

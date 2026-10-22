@@ -6,6 +6,7 @@
     <div class="edit-wrap bulk-edit">
         <h2>Bulk edit</h2>
         <p class="small-text">(Existing classifications, notes and classification reasons for following URLs will be overwritten by this edit.)</p>
+        <div class="form-wrap">
             <form method="POST" action="{{ url_for('bulk_edit_action') }}" enctype="application/x-www-form-urlencoded">
                 <label>Selected URLs:</label>
                 <div class="selected-urls-wrap">          
@@ -13,7 +14,6 @@
                     <div class="selected-url">
                         <input type="hidden" name="selected_urls_list[]" value="{{url}}">
                         <a href="{{ url_for('detail', url=url, show=show) }}" target="_blank"><span>{{url}}</span></a>
-                        <button type="button" onclick="removeSelectedURLElement(this)">X</button>
                     </div>
                     {% endfor %}
                 </div>
@@ -32,6 +32,10 @@
                 <input type="text" id="note" name="note">
                 <input type="submit" class="btn-style" value="Save">
             </form>
+            <div class="back-buttons">
+                <button class="back-btn btn-style" onclick="location.href='{{ url_for('list_all') }}'">Back</button>
+            </div>
+        </div>
 
     </div>
 

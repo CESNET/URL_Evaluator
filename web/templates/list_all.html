@@ -4,18 +4,50 @@
 
 {% if adding == 'success' %}
 <div class="add-response success">
-  <p>URL was successfully added.</p>
+  <p>{{ add_results["added"]|length }} URL(s) successfully added.</p>
+</div>
+{% elif adding == 'partial' %}
+<div class="add-response success">
+  <p>{{ add_results["added"]|length }} added, {{ add_results["in_db"]|length }} already in DB, {{ add_results["invalid"]|length }} invalid.</p>
 </div>
 {% elif adding == 'fail' %}
 <div class="add-response fail">
-  <p>URL was not added. Please check if URL is valid.</p>
+  <p>No URL was added. Please check that the URLs are valid.</p>
 </div>
 {% elif adding == 'in_db' %}
 <div class="add-response fail">
-  <p>URL is already in the database.</p>
+  <p>All submitted URLs are already in the database.</p>
 </div>
 {% endif %}
 <div id="list_all">
+  <div class="list-toolbar">
+  <!-- Quick search bar: filters the table by URL substring or content SHA-256 -->
+  <form class="quick-search" action="{{ url_for('list_all', page=1) }}" method="get" role="search">
+    {% if show %}<input type="hidden" name="show" value="{{ show }}">{% endif %}
+    <span class="quick-search-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    </span>
+    <input type="text" id="quick-search" name="q" placeholder="Search URL or content SHA-256…" autocomplete="off"
+      {% if filter_params["q"] %} value="{{ filter_params["q"] }}" {% endif %}>
+    {% if filter_params["q"] %}
+    <button type="button" class="quick-search-clear" title="Clear search"
+      onclick="window.location.href='{{ url_for('list_all', page=1, show=show, clear_filters=True) }}';">&times;</button>
+    {% endif %}
+  </form>
+  <div class="btn-line">
+    {% if not is_anon %}
+    <div class="filter-btn">
+      <button class="btn-style" onclick=showSelect()>Select multiple URLs</button>
+    </div>
+    {% endif %}
+    <div class="filter-btn">
+      <button class="btn-style" onclick=showFilter()>Filters</button>
+      {% if not is_anon %}
+      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
+      {% endif %}
+    </div>
+  </div>
+  </div>
   <!-- add filter hiden option -->
   <div id="filters">
     <form action="{{ url_for('list_all', page=1) }}" method="post" enctype="application/x-www-form-urlencoded">
@@ -23,27 +55,33 @@
         <div>
           <label class="filter-label" for="find-url">URL</label>
           <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address" {%if
-            filter_params["url"] %} value="{{filter_params[" url"]}}" {% endif %}>
+            filter_params["url"] %} value="{{filter_params["url"]}}" {% endif %}>
         </div><!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-hash">Hash</label>
           <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash" {%if
-            filter_params["hash"] %} value="{{filter_params[" hash"]}}" {% endif %}>
+            filter_params["hash"] %} value="{{filter_params["hash"]}}" {% endif %}>
         </div>
         <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
+          <label class="filter-label" for="find-sha256">Content SHA-256</label>
+          <input class="filter-input" type="text" id="find-sha256" name="find-sha256" placeholder="SHA-256 of downloaded content" {%if
+            filter_params["sha256"] %} value="{{filter_params["sha256"]}}" {% endif %}>
+        </div>
+
+        <div>
           <label class="filter-label" for="find-reason">Reason</label>
           <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
-            filter_params["reason"] %} value="{{filter_params[" reason"]}}" {% endif %}>
+            filter_params["reason"] %} value="{{filter_params["reason"]}}" {% endif %}>
         </div>
         <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
           <label class="filter-label" for="find-note">Note</label>
           <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note" {%if
-            filter_params["note"] %} value="{{filter_params[" note"]}}" {% endif %}>
+            filter_params["note"] %} value="{{filter_params["note"]}}" {% endif %}>
         </div>
 
         <div>
@@ -82,32 +120,96 @@
             <option {%if filter_params["status"]=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
           </select>
         </div>
+
+        <div>
+          <label class="filter-label" for="has_content">Content:</label>
+          <select name="has_content" id="filter-has-content">
+            <option selected value="">---select---</option>
+            <option {%if filter_params["has_content"]=='yes' %} selected {% endif %} value="yes">Has content</option>
+            <option {%if filter_params["has_content"]=='no' %} selected {% endif %} value="no">No content</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="filter-label" for="sandbox">Sandbox:</label>
+          <select name="sandbox" id="filter-sandbox">
+            <option selected value="">---select---</option>
+            <option {%if filter_params["sandbox"]=='analysed' %} selected {% endif %} value="analysed"
+                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 200">Analysed by Hybrid Analysis</option>
+            <option {%if filter_params["sandbox"]=='not_analysed' %} selected {% endif %} value="not_analysed"
+                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 404">Not analysed by Hybrid Analysis</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="filter-label" for="content_type"
+                 title="Type of the downloaded content (any version) detected statically by Magika">Content type:</label>
+          <select name="content_type" id="filter-content-type">
+            <option selected value="">---select---</option>
+            {% for name, (label, severity) in content_type_categories.items() %}
+            <option {% if filter_params["content_type"] == name %} selected {% endif %} value="{{ name }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label class="filter-label" for="scanned_from" title="When activity_scanner last re-polled the URL (UTC)">Last scanned:</label>
+          <input class="filter-input" type="date" id="scanned_from" name="scanned_from" title="from (inclusive)"
+            {% if filter_params["scanned_from"] %} value="{{ filter_params["scanned_from"] }}" {% endif %}>
+          <input class="filter-input" type="date" id="scanned_to" name="scanned_to" title="to (inclusive)"
+            {% if filter_params["scanned_to"] %} value="{{ filter_params["scanned_to"] }}" {% endif %}>
+        </div>
+
+        <div>
+          <label class="filter-label" for="ha_sort">HA check:</label>
+          <select name="ha_sort" id="filter-ha-sort"
+                  title="Sort by when the newest content was last looked up on Hybrid Analysis (never looked up go last)">
+            <option value="">---select---</option>
+            <option {% if key == 'ha_checked' and order == 'desc' %} selected {% endif %} value="desc">Newest check first</option>
+            <option {% if key == 'ha_checked' and order == 'asc' %} selected {% endif %} value="asc">Oldest check first</option>
+          </select>
+        </div>
       </div>
 
       <button class="btn-style filter-submit" type="submit">Search</button>
     </form>
 
   </div>
+  {% if not is_anon %}
   <div id="add-url-wrap">
     <form action="{{ url_for('list_all', page=1) }}" method="post">
-      <label class="filter-label" for="add-url">Suspicious URL</label>
-      <input class="filter-input" type="text" id="add-url" name="add-url" placeholder="URL">
-      <button class="btn-style" type="submit">Add URL</button>
+      <label class="filter-label" for="add-url">Suspicious URLs</label>
+      <p class="add-url-hint">Enter one URL per line (commas and spaces also work). Each URL is validated individually.</p>
+      <textarea class="filter-input" id="add-url" name="add-url" rows="6"
+        placeholder="http://example.com/malware.exe&#10;http://192.0.2.1/bot.sh"></textarea>
+      <button class="btn-style" type="submit">Add URLs</button>
     </form>
-  </div>
-
-  <div class="btn-line">
-    <div class="filter-btn">
-      <button class="btn-style" onclick=showSelect()>Select</button>
+    {% if add_results %}
+    <div class="add-url-results">
+      {% if add_results["added"] %}
+      <div class="add-url-result added">
+        <strong>Added ({{ add_results["added"]|length }}):</strong>
+        <ul>{% for u in add_results["added"] %}<li>{{ u }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+      {% if add_results["in_db"] %}
+      <div class="add-url-result in-db">
+        <strong>Already in DB ({{ add_results["in_db"]|length }}):</strong>
+        <ul>{% for u in add_results["in_db"] %}<li>{{ u }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+      {% if add_results["invalid"] %}
+      <div class="add-url-result invalid">
+        <strong>Invalid, skipped ({{ add_results["invalid"]|length }}):</strong>
+        <ul>{% for u in add_results["invalid"] %}<li>{{ u }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
     </div>
-    <div class="filter-btn">
-      <button class="btn-style"
-        onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
-      <button class="btn-style" onclick=showFilter()>Filters</button>
-      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
-    </div>
+    {% endif %}
   </div>
+  {% endif %}
 
+  {% if not is_anon %}
   <form class="select selected-urls" action="{{ url_for('bulk_edit') }}" method="post">
     <label>Selected URLs:</label>
     <div id="selected-urls-wrap" class="selected-urls-wrap" onload=loadList()>
@@ -118,8 +220,22 @@
       <button class="btn-style select" name="action" value="reevaluate" type="submit">Re-evaluate</button>
     </div>
   </form>
+  {% endif %}
 
   <div class="select select-all"> <input type="checkbox" onclick=selectAll(this) /> Select All</div>
+  <!-- URL count summary: total when no filter is applied, matching vs. total otherwise -->
+  <div class="list-summary">
+    {% if filters_active %}
+    <p><strong>{{ record_count }}</strong> / <strong>{{ total_count }}</strong> URLs</p>
+    <span class="filter-state applied">{{ active_filter_count }}/{{ filter_count }} {{ "filter" if active_filter_count == 1 else "filters" }} applied</span>
+    <button class="btn-style btn-small"
+      onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
+    {% else %}
+    <p>Total URLs: <strong>{{ total_count }}</strong></p>
+    <span class="filter-state">no filters applied</span>
+    {% endif %}
+  </div>
+  <div class="table-wrap">
   <table class="list" id="url-table">
     <thead>
       <tr>
@@ -193,7 +309,7 @@
     <tbody>
       {% for url in url_list %}
       <tr class="table-row">
-        <td class="url">
+        <td class="url {{ url[4] }}" title="{{ url[0] }}">
           <input type="checkbox" class="select" name="selected_urls[]" value="{{ url[0] }}">
           {{ url[0] }}
         </td>
@@ -208,8 +324,10 @@
             alt="note" title="{{ url[6] }}"> {% endif %} </td>
         <td class="reason">{{ url[5] }}</td>
         <td class="btn">
+          {% if not is_anon %}
           <a href="{{ url_for('edit_detail', url=url[0], show=show) }}"><button class="btn-style"
               onclick="">Edit</button></a>
+          {% endif %}
           <a href="{{ url_for('detail', url=url[0], show=show) }}"><button class="btn-style"
               onclick="">Details</button></a>
         </td>
@@ -217,6 +335,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <div class="change_page">
     <button id="prev" class="btn-style {% if page == 1 %} disabled {% endif %}"

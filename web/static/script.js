@@ -189,6 +189,36 @@
     }, 3000); // Show the element after 5 seconds
   });
 
+  // Live quick URL search: auto-submit the form (debounced) while typing,
+  // no Enter needed. Falls back to manual submit when JS is disabled.
+  document.addEventListener("DOMContentLoaded", function () {
+    const quickSearch = document.getElementById('quick-search');
+    if (!quickSearch || !quickSearch.form) {
+      return;
+    }
+    let debounceTimer = null;
+    quickSearch.addEventListener('input', function () {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        // Remember that we submitted via live-search so focus can be restored
+        // (with caret at the end) after the page reloads.
+        sessionStorage.setItem('quickSearchFocus', '1');
+        quickSearch.form.submit();
+      }, 400); // ms pause between keystrokes before searching
+    });
+
+    // After a live-search reload, put focus back into the search field and
+    // move the caret behind the last typed character.
+    if (sessionStorage.getItem('quickSearchFocus') === '1' && quickSearch.value) {
+      sessionStorage.removeItem('quickSearchFocus');
+      quickSearch.focus();
+      const len = quickSearch.value.length;
+      if (quickSearch.setSelectionRange) {
+        quickSearch.setSelectionRange(len, len);
+      }
+    }
+  });
+
 // ----------------------------------------------------------------
 
 function toggleHelp(element) {
@@ -200,3 +230,50 @@ function toggleHelp(element) {
     }
 }
 
+
+// Copy the button's data-copy value; the clipboard API needs HTTPS, so fall
+// back to execCommand on plain HTTP deployments.
+function copyToClipboard(button) {
+    var text = button.getAttribute("data-copy");
+    var title = button.title;
+    var done = function () {
+        button.classList.add("copied");
+        button.title = "Copied";
+        setTimeout(function () {
+            button.classList.remove("copied");
+            button.title = title;
+        }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done);
+        return;
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try {
+        if (document.execCommand("copy")) done();
+    } finally {
+        document.body.removeChild(area);
+    }
+}
+
+// Close the header "Recent" dropdown when clicking anywhere outside it.
+document.addEventListener("click", function (event) {
+    document.querySelectorAll("details.recent-urls[open]").forEach(function (menu) {
+        if (!menu.contains(event.target)) menu.removeAttribute("open");
+    });
+});
+
+// Header light/dark switch; the choice is remembered in this browser.
+function toggleTheme() {
+    var root = document.documentElement;
+    var theme = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+    root.setAttribute("data-theme", theme);
+    try {
+        localStorage.setItem("theme", theme);
+    } catch (e) {}
+}

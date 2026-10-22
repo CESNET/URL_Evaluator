@@ -15,6 +15,29 @@ from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import process_new_session
 
+logger = logging.getLogger("warden2evaluator.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+warden_sources = {}
+wclient = None
+running_flag = False
+
+
+def init(cfg):
+    """
+    Set the module state from `cfg` (incl. compiled Warden source mapping).
+    Called by __main__ and by tests; the Warden client is created in __main__.
+    """
+    global config, warden_sources
+    config = cfg
+
+    # Compile patterns for Warden source mapping
+    warden_sources = {
+        source: {field: re.compile(pattern) for field, pattern in rules.items()}
+        for source, rules in config.warden_sources.items()
+    }
+
 
 def get_source_name(event):
     """
@@ -65,21 +88,33 @@ def receiver():
             time.sleep(10)
             continue
         logger.debug("Received %d events", len(events))
+        handle_events(events)
 
-        with SQLiteWrapper(config.db_path) as db:
-            for event in events:
-                if not (source := get_source_name(event)):
-                    continue
-                for attachment in event.get("Attach", []):
-                    if "Content" in attachment:
-                        content = attachment["Content"]
-                        if re.match("^\[(\'|\")(\r\n|\r|\n|.)*(\'|\")\]$", content):
-                            content = content[2:-2]  # Unwrap
-                        logger.debug(f"Looking for new URLs in '{content}'")
 
-                        # Search for new URLs
-                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), source, None):
-                            logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
+def handle_events(events):
+    """
+    Extract URLs from the attachments of received IDEA events and store them
+    into the DB. Returns the list of newly inserted URLs.
+    """
+    inserted = []
+    with SQLiteWrapper(config.db_path) as db:
+        for event in events:
+            # 'source' here is the honeynet node that captured the event (e.g. 'CESNET Hugo');
+            # the ingest collector/pipeline is always the Warden client
+            if not (honeynet := get_source_name(event)):
+                continue
+            for attachment in event.get("Attach", []):
+                if "Content" in attachment:
+                    content = attachment["Content"]
+                    if re.match("^\[(\'|\")(\r\n|\r|\n|.)*(\'|\")\]$", content):
+                        content = content[2:-2]  # Unwrap
+                    logger.debug(f"Looking for new URLs in '{content}'")
+
+                    # Search for new URLs
+                    if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), "Warden", None, honeynet):
+                        logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
+                        inserted.extend(new_urls)
+    return inserted
 
 
 def sigint_handler(signum, frame):
@@ -99,23 +134,16 @@ if __name__ == "__main__":
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("warden2evaluator.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
-    # Load config
+    # Load config (also compiles the Warden source mapping)
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
-
-    # Compile patterns for Warden source mapping
-    warden_sources = {
-        source: {field: re.compile(pattern) for field, pattern in rules.items()}
-        for source, rules in config.warden_sources.items()
-    }
 
     # Register signal handlers
     signal.signal(signal.SIGINT, sigint_handler)
