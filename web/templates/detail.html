@@ -415,7 +415,7 @@
             {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">The SHA-256 of every downloaded content is looked up on Hybrid Analysis when it is fetched (evaluator, daily activity scan). A sample whose hash Hybrid Analysis does not know (lookup returned HTTP 404) is submitted automatically by evaluator when its URL stays unclassified and the content is an executable or a script; otherwise a logged-in analyst can submit it. The report of a submitted sample is fetched automatically 10, 20 and 30 minutes after the submission, later by the daily activity scan. Its verdict (malicious / whitelisted) classifies the URLs serving the sample only when they are still unclassified &mdash; Hybrid Analysis never changes an existing classification.</p>
+                <p class="content-meta-note">Every time a new content is found on URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is not automatically submitted. It can be submitted for analysis manually by a logged-in analyst.</p>
             </div>
 
             {% for e in sandbox_entries %}
@@ -453,41 +453,20 @@
                                 </button>
                             </td>
                         </tr>
-                        {% set report_url = (ha and ha.sample_url) or ('https://hybrid-analysis.com/sample/' ~ e.sha256) %}
-                        <tr>
-                            <td>Report</td>
-                            <td class="mono"><a class="report-link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></td>
-                        </tr>
                         {% if not ha %}
                         <tr>
                             <td>Hybrid Analysis</td>
                             <td>This content has not been looked up yet (lookup disabled or not run since the content was downloaded).</td>
                         </tr>
                         {% else %}
-                        <tr>
-                            <td>Checked</td>
-                            <td>{{ ha.checked_at|fmt_ts }}</td>
-                        </tr>
-                        {% if ha.error %}
-                        <tr>
-                            <td>Error</td>
-                            <td class="ha-error">{{ ha.error }}</td>
-                        </tr>
-                        {% endif %}
-                        {% if ha.last_error %}
-                        <tr>
-                            <td>Last attempt</td>
-                            <td class="ha-error">{{ ha.last_error.checked_at|fmt_ts }} &ndash; {{ ha.last_error.error or ('HTTP ' ~ ha.last_error.http_status) }} (showing the previous successful result)</td>
-                        </tr>
-                        {% endif %}
-                        {% if not ha.error and not ha.tested %}
-                        <tr>
-                            <td>Result</td>
-                            <td>No detonation report exists on Hybrid Analysis for this hash.</td>
-                        </tr>
-                        {% endif %}
                         {% if ha.tested %}
                         {% set ov = ha.overview or {} %}
+                        {% if ov.type or ov.last_file_name %}
+                        <tr>
+                            <td>File</td>
+                            <td>{{ ov.last_file_name or '' }}{% if ov.type %} <span class="derived-none">({{ ov.type }})</span>{% endif %}</td>
+                        </tr>
+                        {% endif %}
                         <tr>
                             <td>Verdict</td>
                             <td>
@@ -495,27 +474,19 @@
                                 {% if ov.threat_score is defined and ov.threat_score is not none %}
                                 <span class="sandbox-sep">&middot;</span>threat score <strong>{{ ov.threat_score }}</strong>/100
                                 {% endif %}
-                                {% if ha.sample_url %}
-                                <a class="sandbox-report" href="{{ ha.sample_url }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
-                                {% endif %}
+                                <a class="sandbox-report" href="{{ ha.sample_url or ('https://hybrid-analysis.com/sample/' ~ e.sha256) }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
                             </td>
                         </tr>
-                        {% if ov.vx_family %}
-                        <tr>
-                            <td>Malware family</td>
-                            <td>{{ ov.vx_family }}</td>
-                        </tr>
-                        {% endif %}
                         {% if ov.multiscan_result is defined and ov.multiscan_result is not none %}
                         <tr>
                             <td>AV multiscan</td>
                             <td>{{ ov.multiscan_result }}% detection</td>
                         </tr>
                         {% endif %}
-                        {% if ov.type or ov.last_file_name %}
+                        {% if ov.vx_family %}
                         <tr>
-                            <td>File</td>
-                            <td>{{ ov.last_file_name or '' }}{% if ov.type %} <span class="derived-none">({{ ov.type }})</span>{% endif %}</td>
+                            <td>Malware family</td>
+                            <td>{{ ov.vx_family }}</td>
                         </tr>
                         {% endif %}
                         {% if ov.tags %}
@@ -555,15 +526,24 @@
                         </tr>
                         {% endif %}
                         {% endif %}
-                        {% if e.ha_response_pretty %}
                         <tr>
-                            <td>Raw response</td>
-                            <td>
-                                <details class="ha-raw">
-                                    <summary>GET /overview/{sha256} &mdash; HTTP {{ ha.http_status }}</summary>
-                                    <pre class="mono">{{ e.ha_response_pretty }}</pre>
-                                </details>
-                            </td>
+                            <td>Checked</td>
+                            <td>{{ ha.checked_at|fmt_ts }}</td>
+                        </tr>
+                        <tr>
+                            <td>Response</td>
+                            {% if ha.tested %}
+                            <td>SHA-256 already known to Hybrid Analysis (HTTP {{ ha.http_status }}).</td>
+                            {% elif ha.error %}
+                            <td class="ha-error">Lookup failed: {{ ha.error }}</td>
+                            {% else %}
+                            <td>SHA-256 not known to Hybrid Analysis (HTTP {{ ha.http_status }}) &ndash; no report exists for this hash.</td>
+                            {% endif %}
+                        </tr>
+                        {% if ha.last_error %}
+                        <tr>
+                            <td>Last attempt</td>
+                            <td class="ha-error">{{ ha.last_error.checked_at|fmt_ts }} &ndash; {{ ha.last_error.error or ('HTTP ' ~ ha.last_error.http_status) }} (showing the previous successful result)</td>
                         </tr>
                         {% endif %}
                         {% endif %}
@@ -577,9 +557,6 @@
                                 {% if sub.environment_id %}<span class="sandbox-sep">&middot;</span>{{ ha_environments.get(sub.environment_id, sub.environment_id) }}{% endif %}
                                 {% if sub.job_id %}<span class="sandbox-sep">&middot;</span>job <span class="mono">{{ sub.job_id }}</span>{% endif %}
                                 {% if e.submission.status == 'error' and sub.error %}<span class="sandbox-sep">&middot;</span><span class="ha-error">{{ sub.error }}</span>{% endif %}
-                                {% if e.submission.report_url and e.submission.status != 'error' %}
-                                <a class="sandbox-report" href="{{ e.submission.report_url }}" target="_blank" rel="noopener noreferrer">report &rarr;</a>
-                                {% endif %}
                             </td>
                         </tr>
                         {% set plan = e.fetch_plan %}

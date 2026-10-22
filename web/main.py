@@ -643,7 +643,6 @@ def detail():
                 "content_id": cid,
                 "sha256": v.get("sha256"),
                 "ha": ha,
-                "ha_response_pretty": json.dumps(ha.get("response"), indent=2) if ha else None,
                 "submission": submission,
                 "ha_submission": ha_submission,
                 "fetch_plan": fetch_plan,
