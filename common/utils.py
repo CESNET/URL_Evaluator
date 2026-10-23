@@ -180,50 +180,52 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
     if source == "Warden (unknown node)":
         logger.info(f"URL(s) found in an event from unknown Warden node (ID: '{idea_id}')")
 
-    # Store the session and contained URLs
-    db.execute(
-        """
-        INSERT INTO sessions (session_hash, session, idea_id) VALUES (?, ?, ?)
-        ON CONFLICT(session_hash) DO UPDATE SET idea_id = excluded.idea_id;
-        """, (session_hash, session, idea_id)
-    )
-    for url, occurrences in Counter(extracted_urls).items():
-        # Insert the parent `urls` row FIRST: with PRAGMA foreign_keys=ON
-        # the dependent tables (url_session, url_source,
-        # observations, discovered_urls) reference urls.url, so inserting them
-        # before the parent row exists raises "FOREIGN KEY constraint failed".
+    # Store the session and contained URLs in one transaction, so db_cleaner
+    # never sees (and deletes) the session before its url_session links exist
+    with db.transaction():
         db.execute(
             """
-            INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET
-                occurrences = occurrences + 1,
-                last_seen = excluded.last_seen;
-            """, (url, date, date, url_domain[url]))
-        if db.cursor.lastrowid:
-            inserted_urls.append(url)
-
-        # Now that the parent row exists, record its dependent relations.
-        db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
-        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
-        db.execute(
-            "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
-            (url, source, honeynet, session_hash, detect_time)
+            INSERT INTO sessions (session_hash, session, idea_id) VALUES (?, ?, ?)
+            ON CONFLICT(session_hash) DO UPDATE SET idea_id = excluded.idea_id;
+            """, (session_hash, session, idea_id)
         )
-        if source_url:
-            db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
-
-        # Check the number of occurrences of the same URL
-        if occurrences > config.ddos_threshold["same_url_single_session"]:
-            # Only touch rows not already marked as a DDoS target, so repeated
-            # flood sessions don't append duplicate classification_history entries.
-            updated = db.execute(
+        for url, occurrences in Counter(extracted_urls).items():
+            # Insert the parent `urls` row FIRST: with PRAGMA foreign_keys=ON
+            # the dependent tables (url_session, url_source,
+            # observations, discovered_urls) reference urls.url, so inserting them
+            # before the parent row exists raises "FOREIGN KEY constraint failed".
+            db.execute(
                 """
-                UPDATE urls SET evaluated='yes', classification='harmless', classification_reason='DDoS target'
-                WHERE url=? AND NOT (classification IS 'harmless' AND classification_reason IS 'DDoS target');
-                """, (url,)).rowcount
-            if updated:
-                logger.info(f"URL {url} was classified as harmless, reason: DDoS target")
-                db.record_classification(url, "harmless", reason="DDoS target", actor="session-ddos")
+                INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    occurrences = occurrences + 1,
+                    last_seen = excluded.last_seen;
+                """, (url, date, date, url_domain[url]))
+            if db.cursor.lastrowid:
+                inserted_urls.append(url)
+
+            # Now that the parent row exists, record its dependent relations.
+            db.execute("INSERT OR IGNORE INTO url_session (url, session) VALUES (?, ?)", (url, session_hash))
+            db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, source))
+            db.execute(
+                "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+                (url, source, honeynet, session_hash, detect_time)
+            )
+            if source_url:
+                db.execute("INSERT OR IGNORE INTO discovered_urls (url, src_url) VALUES (?, ?)", (url, source_url))
+
+            # Check the number of occurrences of the same URL
+            if occurrences > config.ddos_threshold["same_url_single_session"]:
+                # Only touch rows not already marked as a DDoS target, so repeated
+                # flood sessions don't append duplicate classification_history entries.
+                updated = db.execute(
+                    """
+                    UPDATE urls SET evaluated='yes', classification='harmless', classification_reason='DDoS target'
+                    WHERE url=? AND NOT (classification IS 'harmless' AND classification_reason IS 'DDoS target');
+                    """, (url,)).rowcount
+                if updated:
+                    logger.info(f"URL {url} was classified as harmless, reason: DDoS target")
+                    db.record_classification(url, "harmless", reason="DDoS target", actor="session-ddos")
 
     # Check the number of URLs from the same domain
     domain_map = defaultdict(list)

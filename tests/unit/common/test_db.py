@@ -30,6 +30,27 @@ def test_execute_many_is_atomic(db):
     assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 0
 
 
+def test_transaction_commits_at_the_end(db, db_path):
+    with db.transaction():
+        insert_url(db, "http://a.test/1")
+        db.record_classification("http://a.test/1", "harmless")
+        with SQLiteWrapper(db_path) as other:  # nothing is visible before the block ends
+            assert other.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 0
+    with SQLiteWrapper(db_path) as other:
+        assert other.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 1
+        assert other.execute("SELECT COUNT(*) FROM classification_history").fetchone()[0] == 1
+
+
+def test_transaction_rolls_back_as_a_whole(db):
+    with pytest.raises(Exception):
+        with db.transaction():
+            insert_url(db, "http://a.test/1")
+            insert_url(db, "http://a.test/1")  # duplicate -> the first insert is undone too
+    assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 0
+    insert_url(db, "http://a.test/2")  # the connection is usable (autocommit) afterwards
+    assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 1
+
+
 def test_record_classification(db):
     url = insert_url(db)
     db.record_classification(url, "malicious", reason="Blacklist check", actor="evaluator")

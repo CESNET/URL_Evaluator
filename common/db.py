@@ -1,5 +1,6 @@
 import pysqlite3 as sqlite3
 import logging
+from contextlib import contextmanager
 
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
 LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
@@ -15,6 +16,7 @@ class SQLiteWrapper:
             logger.debug(f"Connecting to {db_path}")
             self.conn = sqlite3.connect(db_path, timeout=30.0)
             self.cursor = self.conn.cursor()
+            self.in_transaction = False
             self.conn.execute('PRAGMA journal_mode=WAL')
             # Enforce foreign key constraints (incl. ON DELETE CASCADE rules
             # introduced by migration 005). SQLite keeps this off by default
@@ -47,17 +49,42 @@ class SQLiteWrapper:
 
     def execute(self, query, params=None):
         """
-        Execute an SQL command and commit changes
+        Execute an SQL command and commit changes (deferred to the end of an
+        enclosing transaction(), if any)
         """
         try:
             logger.debug(f"Executing SQL: {query}")
             self.cursor.execute(query, params if params else [])
-            self.conn.commit()
+            if not self.in_transaction:
+                self.conn.commit()
         except Exception as e:
             logger.exception(f"Error executing SQL: {e}")
-            self.conn.rollback()
+            if not self.in_transaction:
+                self.conn.rollback()
             raise
         return self.cursor
+
+    @contextmanager
+    def transaction(self):
+        """
+        Run the enclosed execute() / record_classification() calls in a single
+        transaction: committed when the block ends, rolled back as a whole if
+        it raises. Unlike execute_many, results of the individual statements
+        (lastrowid, rowcount, fetched rows) stay available inside the block.
+        """
+        if self.in_transaction:
+            yield self
+            return
+        self.conn.execute("BEGIN")
+        self.in_transaction = True
+        try:
+            yield self
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        finally:
+            self.in_transaction = False
 
     def execute_many(self, statements):
         """
@@ -101,7 +128,11 @@ class SQLiteWrapper:
                 "VALUES (?, ?, ?, ?, ?)",
                 (url, classification, reason, note, actor)
             )
-            self.conn.commit()
+            if not self.in_transaction:
+                self.conn.commit()
         except Exception as e:
             logger.warning(f"Could not record classification history for {url}: {e}")
-            self.conn.rollback()
+            # A failed statement does not abort an enclosing transaction, so
+            # only roll back when there is none (the audit entry is best-effort)
+            if not self.in_transaction:
+                self.conn.rollback()

