@@ -9,6 +9,13 @@ def test_schema_created(db):
     assert {"urls", "sessions", "content", "download_observations", "classification_history"} <= tables
 
 
+def test_url_session_indexed_by_session(db):
+    # deleting orphan sessions cascades to url_session; without this index
+    # every deleted session is a full scan of url_session
+    plan = db.execute("EXPLAIN QUERY PLAN SELECT * FROM url_session WHERE session = 'x'").fetchall()
+    assert any("idx_url_session_session" in row[-1] for row in plan)
+
+
 def test_pragmas(db):
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"

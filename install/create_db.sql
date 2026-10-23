@@ -14,6 +14,8 @@ CREATE TABLE url_session
     CONSTRAINT url_session_unique UNIQUE (url, session)
 );
 
+CREATE INDEX idx_url_session_session ON url_session(session);
+
 CREATE TABLE url_source
 (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
