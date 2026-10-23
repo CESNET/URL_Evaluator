@@ -5,6 +5,7 @@ import logging
 import sys
 import os
 import signal
+import time
 from datetime import date, timedelta
 from apscheduler.schedulers.background import BlockingScheduler
 
@@ -56,6 +57,8 @@ def db_cleaner():
         urls_to_delete = list(dict.fromkeys(urls_inactive + urls_invalid))
         num_deleted_inactive = len(urls_inactive)
         num_deleted_invalid = len(urls_invalid)
+        logger.debug(f"Found {num_deleted_inactive} inactive URLs (last seen before {cutoff_inactive}) "
+                     f"and {num_deleted_invalid} invalid URLs (last seen before {cutoff_invalid}) to delete")
 
         content_candidates = set()
         if content_store is not None and urls_to_delete:
@@ -72,6 +75,8 @@ def db_cleaner():
         #    same transaction via execute_many -- F1/R1).
         # ------------------------------------------------------------------
         if urls_to_delete:
+            logger.debug(f"Deleting {len(urls_to_delete)} URLs and their dependent records")
+            started = time.monotonic()
             statements = [
                 (
                     "DELETE FROM urls WHERE url = ?",
@@ -80,6 +85,7 @@ def db_cleaner():
                 for url in urls_to_delete
             ]
             db.execute_many(statements)
+            logger.debug(f"URLs deleted in {time.monotonic() - started:.1f} s")
 
         # ------------------------------------------------------------------
         # 3. Conditional disk/DB cleanup of content (F4/F5): only drop a
@@ -89,6 +95,7 @@ def db_cleaner():
         #    so a rollback can never leave files orphaned.
         # ------------------------------------------------------------------
         if content_store is not None and content_candidates:
+            logger.debug(f"Cleaning up {len(content_candidates)} content samples of the deleted URLs")
             try:
                 content_store.cleanup_orphan_content(db, candidates=content_candidates)
             except Exception as e:
@@ -101,9 +108,12 @@ def db_cleaner():
         #    ingest) would otherwise stay forever. Flood sessions are
         #    megabytes each, so they dominate the DB size.
         # ------------------------------------------------------------------
+        logger.debug("Deleting orphan sessions")
+        started = time.monotonic()
         num_deleted_sessions = db.execute(
             "DELETE FROM sessions WHERE session_hash NOT IN (SELECT session FROM url_session)"
         ).rowcount
+        logger.debug(f"Deleted {num_deleted_sessions} orphan sessions in {time.monotonic() - started:.1f} s")
 
         # ------------------------------------------------------------------
         # 5. Return the freed pages to the filesystem. SQLite only reuses
@@ -111,8 +121,11 @@ def db_cleaner():
         #    VACUUM takes an exclusive lock for its whole run, hence opt-out.
         # ------------------------------------------------------------------
         if getattr(config, "db_vacuum", True) and (urls_to_delete or num_deleted_sessions):
+            logger.debug("Running VACUUM")
+            started = time.monotonic()
             try:
                 db.execute("VACUUM")
+                logger.debug(f"VACUUM finished in {time.monotonic() - started:.1f} s")
             except Exception as e:
                 logger.warning(f"VACUUM failed: {e}")
 
