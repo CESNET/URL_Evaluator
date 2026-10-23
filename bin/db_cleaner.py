@@ -94,7 +94,30 @@ def db_cleaner():
             except Exception as e:
                 logger.warning(f"Orphan content cleanup failed: {e}")
 
-    logger.info(f"Deleted {num_deleted_inactive} inactive and {num_deleted_invalid} invalid URLs")
+        # ------------------------------------------------------------------
+        # 4. Drop sessions no longer linked to any URL. Deleting a URL only
+        #    cascades to url_session, never to `sessions`, so sessions whose
+        #    URLs were all removed (aged out, DDoS floods deleted right after
+        #    ingest) would otherwise stay forever. Flood sessions are
+        #    megabytes each, so they dominate the DB size.
+        # ------------------------------------------------------------------
+        num_deleted_sessions = db.execute(
+            "DELETE FROM sessions WHERE session_hash NOT IN (SELECT session FROM url_session)"
+        ).rowcount
+
+        # ------------------------------------------------------------------
+        # 5. Return the freed pages to the filesystem. SQLite only reuses
+        #    them internally, so without VACUUM the file never shrinks.
+        #    VACUUM takes an exclusive lock for its whole run, hence opt-out.
+        # ------------------------------------------------------------------
+        if getattr(config, "db_vacuum", True) and (urls_to_delete or num_deleted_sessions):
+            try:
+                db.execute("VACUUM")
+            except Exception as e:
+                logger.warning(f"VACUUM failed: {e}")
+
+    logger.info(f"Deleted {num_deleted_inactive} inactive and {num_deleted_invalid} invalid URLs, "
+                f"{num_deleted_sessions} orphan sessions")
     logger.info("Job finished")
 
 

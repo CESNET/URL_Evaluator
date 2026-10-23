@@ -47,8 +47,8 @@ def test_db_cleaner_removes_url_graph_and_orphan_content(db_cleaner_mod, db, con
         assert count(db, table, old) == 0, table
         if table != "discovered_urls":
             assert count(db, table, alive) == 1, table
-    # the session only referenced by `old` stays (sessions are not cascaded from urls)
-    assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 2
+    # the session only referenced by `old` is dropped as an orphan, the one of `alive` stays
+    assert [r[0] for r in db.execute("SELECT session FROM sessions").fetchall()] == [f"wget {alive}"]
     # shared payload kept, orphan payload removed from DB and disk
     assert [r[0] for r in db.execute("SELECT id FROM content").fetchall()] == [shared]
     assert not os.path.exists(orphan_path)

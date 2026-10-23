@@ -38,6 +38,9 @@ scheduler:
 # Older records are automatically deleted
 max_age_inactive: 30 # days
 max_age_invalid: 7 # days
+# Run VACUUM after db_cleaner deleted something, so the DB file actually shrinks
+# (locks the DB exclusively while it runs; the first run on a large DB may take minutes)
+db_vacuum: true
 
 # Max size of downloaded content
 max_file_size: 100 # MB
