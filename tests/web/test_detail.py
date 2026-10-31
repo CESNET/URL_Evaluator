@@ -1,4 +1,5 @@
-from tests.factories import insert_classification, insert_content, insert_download, insert_sandbox_submission, insert_url
+from tests.factories import (insert_classification, insert_content, insert_download, insert_observation,
+                             insert_sandbox_submission, insert_source, insert_url)
 
 ANALYST = {"REMOTE_USER": "alice"}
 URL = "http://evil.test/a.sh"
@@ -30,6 +31,39 @@ def test_classification_history_hides_analyst_names_from_anonymous(web_client, d
 
     assert "Alice Analyst" not in anonymous and "evaluator" in anonymous
     assert "Alice Analyst" in analyst
+
+
+def test_overview_shows_most_reported_source_with_link_to_sources_tab(web_client, db):
+    insert_url(db, URL)
+    insert_observation(db, URL, honeynet="honeynet-a")
+    insert_observation(db, URL, honeynet="honeynet-b", observed_at="2026-01-02T12:00:00+00:00")
+    insert_observation(db, URL, honeynet="honeynet-b", observed_at="2026-01-03T12:00:00+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert "Most reported source</td>" in page
+    assert "honeynet-b\n" in page and "honeynet-a" not in page
+    assert "tab=sources" in page and "see details in" in page and "sources tab</a>" in page
+
+
+def test_overview_source_falls_back_to_url_sources_without_observations(web_client, db):
+    insert_url(db, URL)
+    insert_source(db, URL, "Manual")
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert "<td>Manual\n" in page
+
+
+def test_overview_shows_inactive_since(web_client, db):
+    insert_url(db, URL, status="inactive", last_active="2026-10-20")
+    insert_url(db, "http://never.test/", status="inactive", last_active=None)
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+    never = web_client.get("/detail", query_string={"url": "http://never.test/"}).get_data(as_text=True)
+
+    assert "URL is inactive since</td>" in page and "<td>2026-10-20</td>" in page
+    assert "<td>never seen active</td>" in never
 
 
 def test_anonymous_user_cannot_reevaluate(web_client, db):

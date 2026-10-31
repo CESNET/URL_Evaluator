@@ -687,6 +687,13 @@ def detail():
     if url_detail.status == 'inactive' and url_detail.last_active:
         inactive_for = (datetime.now(timezone.utc).date() - datetime.strptime(url_detail.last_active, '%Y-%m-%d').date()).days
 
+    # Overview "Source": the honeynet/source with the most sightings (same
+    # grouping as the Sources tab); the url_source labels when nothing is observed.
+    if observations:
+        top_source = max(observations, key=lambda o: o[3])[0]
+    else:
+        top_source = ", ".join(url_detail.src)
+
     # get link for external sources
     reason_link = None
     if url_detail.reason == "Blacklist check":
@@ -709,7 +716,7 @@ def detail():
 
     return render_template(
         'detail.html', user=user, is_anon=is_anonymous(user), url=url_detail, sessions=sessions, show=show,
-        links=links, inactive_for=inactive_for, tab=tab,
+        links=links, inactive_for=inactive_for, tab=tab, top_source=top_source,
         observations=observations, tab_counts=tab_counts,
         class_history=class_history,
         derived_from=derived_from, derived_from_in_db=derived_from_in_db,

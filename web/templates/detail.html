@@ -69,13 +69,31 @@
                     </td>
                 </tr>
                 <tr>
+                    <td>Classification reason</td>
+                    <td>
+                        <div class="reason-link">
+                            <p>{{ url.reason }}</p>
+                            {% if links["reason-link"] %}
+                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% if url.note %}
+                <tr>
+                    <td>Note</td>
+                    <td>{{ url.note }}</td>
+                </tr>
+                {% endif %}
+                <tr>
                     <td>Status</td>
                     <td class="status {{url["status"]}}">{{ url["status"] }} {% if url["status"] == 'inactive' and inactive_for %} (inactive for {{ inactive_for }} days) {% endif %}</td>
                 </tr>
                 {% if url["status"] == 'inactive' %}
                 <tr>
-                    <td>Active last</td>
-                    <td>{{ url.last_active }}</td>
+                    <td>URL is inactive since</td>
+                    <td>{{ url.last_active or "never seen active" }}</td>
+                </tr>
                 {% endif %}
                 <tr>
                     <td>First seen</td>
@@ -90,19 +108,9 @@
                     <td>{{ url.occurrences }}</td>
                 </tr>
                 <tr>
-                    <td>Classification reason</td>
-                    <td>
-                        <div class="reason-link">
-                            <p>{{ url.reason }}</p>
-                            {% if links["reason-link"] %}
-                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>Source</td>
-                    <td>{{ url.src | join(', ') }}</td>
+                    <td>Most reported source</td>
+                    <td>{{ top_source }}
+                        , see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">sources tab</a></td>
                 </tr>
                 <tr>
                     <td>Derived from</td>
@@ -151,12 +159,6 @@
                         </div>
                     </td>
                 </tr>
-                {% if url.note %}
-                <tr>
-                    <td>Note</td>
-                    <td>{{ url.note }}</td>
-                </tr>
-                {% endif %}
                 {% if url.file_mime_type %}
                 <tr>
                     <td>File mime type</td>
@@ -166,7 +168,12 @@
                 {% if url.content_size %}
                 <tr>
                     <td>Content size</td>
-                    <td>{{ url.content_size }} bytes</td>
+                    <td>{{ url.content_size }} bytes, see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='content') }}" title="Content">content tab</a></td>
+                </tr>
+                {%else %}
+                <tr>
+                    <td>Content size</td>
+                    <td>This URL has no content yet</td>
                 </tr>
                 {% endif %}
                 {% if url.threat_label %}
