@@ -183,9 +183,59 @@ form.selected-urls {
   line-height: 1.6;
 }
 
-#add-url-wrap button[type="submit"] {
-  align-self: flex-end;
+#add-url-wrap .add-url-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   margin-top: 10px;
+}
+
+#add-url-wrap button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#add-url-wrap textarea.filter-input.has-invalid {
+  border-color: var(--err);
+}
+
+/* live validation report under the add-URL textarea */
+.add-url-check {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.add-url-check:empty {
+  display: none;
+}
+
+.add-url-check .ok  { color: var(--ok); }
+.add-url-check .err { color: var(--err); }
+
+.add-url-check ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  color: var(--err);
+  word-break: break-all;
+}
+
+/* Filters button chevron: points down while the panel is closed, up when open */
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-chevron {
+  transition: transform 0.2s ease;
+}
+
+.filter-toggle.open .filter-chevron {
+  transform: rotate(180deg);
 }
 
 /* per-URL result report shown after a bulk add */

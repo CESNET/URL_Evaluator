@@ -1,9 +1,10 @@
   function showFilter() {
     const filters = document.getElementById('filters');
-    if (filters.classList.contains('active-filter')) {
-      filters.classList.remove('active-filter');
-    } else {
-      filters.classList.add('active-filter')
+    const open = filters.classList.toggle('active-filter');
+    const toggle = document.getElementById('filter-toggle');
+    if (toggle) {
+      toggle.classList.toggle('open', open);
+      toggle.setAttribute('aria-expanded', open);
     }
   }
 
@@ -170,6 +171,72 @@
       add.classList.add('active-add')
     }
   }
+
+  function cancelAddURL() {
+    const textarea = document.getElementById('add-url');
+    textarea.value = '';
+    validateAddURLs();
+    document.getElementById('add-url-wrap').classList.remove('active-add');
+  }
+
+  // Client-side mirror of common.utils.split_url_lines()
+  function splitURLLines(text) {
+    return text.split(/[\s,]+/).filter(function (token) { return token; });
+  }
+
+  // Client-side mirror of common.utils.is_valid(): urlparse() needs both a
+  // scheme and a netloc, i.e. "scheme://host...".
+  function isValidURL(url) {
+    return /^[a-z][a-z0-9+.\-]*:\/\/[^\/?#]+/i.test(url);
+  }
+
+  function escapeHTML(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // Validate the add-URL textarea as the user types; report invalid entries
+  // right away and keep the submit button disabled until all of them are valid.
+  function validateAddURLs() {
+    const textarea = document.getElementById('add-url');
+    const report = document.getElementById('add-url-check');
+    const submit = document.getElementById('add-url-submit');
+    if (!textarea || !report || !submit) {
+      return;
+    }
+    const candidates = splitURLLines(textarea.value);
+    const invalid = candidates.filter(function (url) { return !isValidURL(url); });
+    const valid = candidates.length - invalid.length;
+
+    textarea.classList.toggle('has-invalid', invalid.length > 0);
+    submit.disabled = candidates.length === 0 || invalid.length > 0;
+
+    if (candidates.length === 0) {
+      report.innerHTML = '';
+    } else if (invalid.length === 0) {
+      report.innerHTML = '<span class="ok">' + valid + ' valid URL(s) ready to add.</span>';
+    } else {
+      report.innerHTML = '<span class="err">' + invalid.length + ' invalid URL(s)</span>'
+        + ' (' + valid + ' valid). A URL must look like <code>http://host/path</code>:'
+        + '<ul>' + invalid.map(function (url) { return '<li>' + escapeHTML(url) + '</li>'; }).join('') + '</ul>';
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const textarea = document.getElementById('add-url');
+    if (!textarea) {
+      return;
+    }
+    textarea.addEventListener('input', validateAddURLs);
+    textarea.form.addEventListener('submit', function (event) {
+      validateAddURLs();
+      if (document.getElementById('add-url-submit').disabled) {
+        event.preventDefault();
+      }
+    });
+    validateAddURLs();
+  });
 
   document.addEventListener("DOMContentLoaded", function () {
     setTimeout(function () {
