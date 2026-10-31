@@ -43,7 +43,7 @@
     <div class="filter-btn">
       <button class="btn-style" onclick=showFilter()>Filters</button>
       {% if not is_anon %}
-      <button class="btn-style add-btn" alt="Add URL" onclick=showAddURL()>+</button>
+      <button class="btn-style add-btn" title="Add URLs" onclick=showAddURL()>Add URLs +</button>
       {% endif %}
     </div>
   </div>
@@ -56,32 +56,13 @@
           <label class="filter-label" for="find-url">URL</label>
           <input class="filter-input" type="text" id="find-url" name="find-url" placeholder="URL address" {%if
             filter_params["url"] %} value="{{filter_params["url"]}}" {% endif %}>
-        </div><!-- <button class="btn-style" type="submit">Search</button> -->
-
-        <div>
-          <label class="filter-label" for="find-hash">Hash</label>
-          <input class="filter-input" type="text" id="find-hash" name="find-hash" placeholder="Hash" {%if
-            filter_params["hash"] %} value="{{filter_params["hash"]}}" {% endif %}>
         </div>
-        <!-- <button class="btn-style" type="submit">Search</button> -->
 
         <div>
-          <label class="filter-label" for="find-sha256">Content SHA-256</label>
-          <input class="filter-input" type="text" id="find-sha256" name="find-sha256" placeholder="SHA-256 of downloaded content" {%if
+          <label class="filter-label" for="find-sha256" title="Exact SHA-256 of any content downloaded from the URL">Content SHA-256</label>
+          <input class="filter-input" type="text" id="find-sha256" name="find-sha256" placeholder="Full SHA-256 of downloaded content"
+            pattern="\s*[0-9a-fA-F]{64}\s*" title="64 hexadecimal characters (full match only)" {%if
             filter_params["sha256"] %} value="{{filter_params["sha256"]}}" {% endif %}>
-        </div>
-
-        <div>
-          <label class="filter-label" for="find-reason">Reason</label>
-          <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
-            filter_params["reason"] %} value="{{filter_params["reason"]}}" {% endif %}>
-        </div>
-        <!-- <button class="btn-style" type="submit">Search</button> -->
-
-        <div>
-          <label class="filter-label" for="find-note">Note</label>
-          <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Note" {%if
-            filter_params["note"] %} value="{{filter_params["note"]}}" {% endif %}>
         </div>
 
         <div>
@@ -100,6 +81,18 @@
             </option>
             <option {%if filter_params["classification"]=='miner' %} selected {% endif %} value="miner">Miner</option>
           </select>
+        </div>
+
+        <div>
+          <label class="filter-label" for="find-reason">Reason</label>
+          <input class="filter-input" type="text" id="find-reason" name="find-reason" placeholder="Reason" {%if
+            filter_params["reason"] %} value="{{filter_params["reason"]}}" {% endif %}>
+        </div>
+
+        <div>
+          <label class="filter-label" for="find-note" title="Matches any part of the note">Note</label>
+          <input class="filter-input" type="text" id="find-note" name="find-note" placeholder="Part of the note" {%if
+            filter_params["note"] %} value="{{filter_params["note"]}}" {% endif %}>
         </div>
 
         <div>
@@ -122,22 +115,11 @@
         </div>
 
         <div>
-          <label class="filter-label" for="has_content">Content:</label>
+          <label class="filter-label" for="has_content">Has stored content:</label>
           <select name="has_content" id="filter-has-content">
             <option selected value="">---select---</option>
-            <option {%if filter_params["has_content"]=='yes' %} selected {% endif %} value="yes">Has content</option>
-            <option {%if filter_params["has_content"]=='no' %} selected {% endif %} value="no">No content</option>
-          </select>
-        </div>
-
-        <div>
-          <label class="filter-label" for="sandbox">Sandbox:</label>
-          <select name="sandbox" id="filter-sandbox">
-            <option selected value="">---select---</option>
-            <option {%if filter_params["sandbox"]=='analysed' %} selected {% endif %} value="analysed"
-                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 200">Analysed by Hybrid Analysis</option>
-            <option {%if filter_params["sandbox"]=='not_analysed' %} selected {% endif %} value="not_analysed"
-                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 404">Not analysed by Hybrid Analysis</option>
+            <option {%if filter_params["has_content"]=='yes' %} selected {% endif %} value="yes">Yes</option>
+            <option {%if filter_params["has_content"]=='no' %} selected {% endif %} value="no">No</option>
           </select>
         </div>
 
@@ -153,20 +135,13 @@
         </div>
 
         <div>
-          <label class="filter-label" for="scanned_from" title="When activity_scanner last re-polled the URL (UTC)">Last scanned:</label>
-          <input class="filter-input" type="date" id="scanned_from" name="scanned_from" title="from (inclusive)"
-            {% if filter_params["scanned_from"] %} value="{{ filter_params["scanned_from"] }}" {% endif %}>
-          <input class="filter-input" type="date" id="scanned_to" name="scanned_to" title="to (inclusive)"
-            {% if filter_params["scanned_to"] %} value="{{ filter_params["scanned_to"] }}" {% endif %}>
-        </div>
-
-        <div>
-          <label class="filter-label" for="ha_sort">HA check:</label>
-          <select name="ha_sort" id="filter-ha-sort"
-                  title="Sort by when the newest content was last looked up on Hybrid Analysis (never looked up go last)">
-            <option value="">---select---</option>
-            <option {% if key == 'ha_checked' and order == 'desc' %} selected {% endif %} value="desc">Newest check first</option>
-            <option {% if key == 'ha_checked' and order == 'asc' %} selected {% endif %} value="asc">Oldest check first</option>
+          <label class="filter-label" for="sandbox">Analyzed in HA sandbox:</label>
+          <select name="sandbox" id="filter-sandbox">
+            <option selected value="">---select---</option>
+            <option {%if filter_params["sandbox"]=='analysed' %} selected {% endif %} value="analysed"
+                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 200">Yes</option>
+            <option {%if filter_params["sandbox"]=='not_analysed' %} selected {% endif %} value="not_analysed"
+                    title="Hybrid Analysis hash lookup (GET /overview/{sha256}) returned HTTP 404">No</option>
           </select>
         </div>
       </div>

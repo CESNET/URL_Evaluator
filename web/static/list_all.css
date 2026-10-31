@@ -147,16 +147,6 @@ form.selected-urls {
   width: 100%;
 }
 
-/* "Last scanned" from/to dates share one cell */
-#list_all #filters .filter-wrap #scanned_from,
-#list_all #filters .filter-wrap #scanned_to {
-  width: calc(50% - 4px);
-}
-
-#list_all #filters .filter-wrap #scanned_from {
-  margin-right: 4px;
-}
-
 #list_all #filters .filter-submit {
   align-self: flex-end;
   margin-top: 16px;

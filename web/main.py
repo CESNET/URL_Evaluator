@@ -272,16 +272,6 @@ def get_ip(url):
         return ""
 
 
-# When the newest downloaded content of a URL was last looked up on Hybrid
-# Analysis (same content ordering as the "sandbox" filter); NULL when never.
-HA_CHECKED_SQL = (
-    "(SELECT CASE WHEN json_valid(c.sandbox_info) "
-    "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.checked_at') END "
-    "FROM download_observations d JOIN content c ON c.id = d.content_id "
-    "WHERE d.url = urls.url ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1)"
-)
-
-
 def parse_filters():
     parsed_filters = " WHERE url NOT NULL"
     for param, value in filter_params.items():
@@ -291,10 +281,6 @@ def parse_filters():
             parsed_filters += f" AND classification='{value}'"
         if param == "url":
             parsed_filters += f" AND url LIKE '%{value}%'"
-        # When activity_scanner last re-polled the URL (date range, UTC days).
-        if param in ("scanned_from", "scanned_to") and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-            op = ">=" if param == "scanned_from" else "<="
-            parsed_filters += f" AND date(last_scanned) {op} '{value}'"
         # Quick search: URL substring, or (for a hex-only query of at least 8
         # characters) a substring of the SHA-256 of any downloaded content.
         if param == "q":
@@ -307,8 +293,6 @@ def parse_filters():
                     f"WHERE d.url = urls.url AND c.sha256 LIKE '%{sha256}%')"
                 )
             parsed_filters += f" AND ({clause})"
-        if param == "hash":
-            parsed_filters += f" AND hash LIKE '%{value}%'"
         if param == "note":
             parsed_filters += f" AND note LIKE '%{value}%'"
         if param == "reason":
@@ -319,6 +303,19 @@ def parse_filters():
             parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
         if param == "evaluated":
             parsed_filters += f" AND evaluated='{value}'"
+        # Filter on the SHA-256 of any content downloaded from the URL (full
+        # match only). Anything other than 64 hex digits matches nothing, so
+        # the value never reaches SQL unchecked.
+        if param == "sha256":
+            sha256 = value.lower()
+            if re.fullmatch(r"[0-9a-f]{64}", sha256):
+                parsed_filters += (
+                    " AND EXISTS (SELECT 1 FROM download_observations d "
+                    "JOIN content c ON c.id = d.content_id "
+                    f"WHERE d.url = urls.url AND c.sha256 = '{sha256}')"
+                )
+            else:
+                parsed_filters += " AND 0"
         # Filter on whether the URL has any stored (downloadable) content.
         # "yes" -> at least one download_observations row references a content
         # row; "no" -> no such row. Uses EXISTS/NOT EXISTS against
@@ -334,15 +331,6 @@ def parse_filters():
                 parsed_filters += f" AND {exists_clause}"
             elif value == "no":
                 parsed_filters += f" AND NOT {exists_clause}"
-        # Filter on the SHA-256 of any content downloaded from the URL
-        # (substring match; only hex digits are kept, the value goes into SQL).
-        if param == "sha256":
-            sha256 = re.sub(r"[^0-9a-f]", "", value.lower())
-            parsed_filters += (
-                " AND EXISTS (SELECT 1 FROM download_observations d "
-                "JOIN content c ON c.id = d.content_id "
-                f"WHERE d.url = urls.url AND c.sha256 LIKE '%{sha256}%')"
-            )
         # Filter on the Hybrid Analysis lookup stored per content, checked on
         # the newest downloaded content of the URL (same ordering as
         # content_store.latest_content_id):
@@ -366,11 +354,7 @@ def parse_filters():
                 "JOIN content c ON c.id = d.content_id "
                 f"WHERE d.url = urls.url AND c.file_category = '{value}')"
             )
-    if filter_params['order_key'] == "ha_checked":
-        # URLs never looked up go last in both directions.
-        parsed_filters += f" ORDER BY {HA_CHECKED_SQL} {filter_params['order']} NULLS LAST"
-    else:
-        parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
+    parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
     return parsed_filters
 
 
@@ -422,11 +406,7 @@ def list_all():
             find_url = flask.request.form['find-url'].strip()
             filter_params["url"] = find_url
 
-            find_hash = flask.request.form['find-hash'].strip()
-            filter_params["hash"] = find_hash
-
-            find_sha256 = flask.request.form.get('find-sha256', '').strip()
-            filter_params["sha256"] = find_sha256
+            filter_params["sha256"] = flask.request.form.get('find-sha256', '').strip()
 
             find_note = flask.request.form['find-note'].strip()
             filter_params["note"] = find_note
@@ -451,8 +431,6 @@ def list_all():
 
             filter_params["content_type"] = flask.request.form.get('content_type', '').strip()
 
-            filter_params["scanned_from"] = flask.request.form.get('scanned_from', '').strip()
-            filter_params["scanned_to"] = flask.request.form.get('scanned_to', '').strip()
         except BadRequestKeyError:
             pass
 
@@ -497,10 +475,6 @@ def list_all():
     # set order of the list
     order = flask.request.args.get("order", "desc")
     order_key = flask.request.args.get("key", "last_seen")
-    # "HA check" select in the filters panel sorts by the last Hybrid Analysis lookup.
-    ha_sort = flask.request.form.get('ha_sort', '') if flask.request.method == 'POST' else ''
-    if ha_sort in ("asc", "desc"):
-        order, order_key = ha_sort, "ha_checked"
 
     filter_params["order"] = order
     filter_params["order_key"] = order_key
@@ -508,14 +482,13 @@ def list_all():
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
-    filter_keys = ("q", "url", "hash", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type", "sha256", "scanned_from", "scanned_to")
+    filter_keys = ("q", "url", "sha256", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type")
     filters_active = any(filter_params.get(k) for k in filter_keys)
     # Filters as the user sees them (quick search + filter panel fields) for the
     # "x/y filters applied" info; the show tabs count as the classification
-    # filter and the "Last scanned" from/to dates as one filter.
-    filter_groups = (("q",), ("url",), ("hash",), ("sha256",), ("reason",), ("note",),
-                     ("classification", "evaluated"), ("src",), ("status",), ("has_content",),
-                     ("sandbox",), ("content_type",), ("scanned_from", "scanned_to"))
+    # filter.
+    filter_groups = (("q",), ("url",), ("sha256",), ("classification", "evaluated"), ("reason",), ("note",),
+                     ("src",), ("status",), ("has_content",), ("content_type",), ("sandbox",))
     active_filter_count = sum(1 for group in filter_groups if any(filter_params.get(k) for k in group))
 
     with SQLiteWrapper(config.db_path) as db:
