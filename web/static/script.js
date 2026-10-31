@@ -61,7 +61,7 @@
     div.className = 'selected-url';
     div.innerHTML = `
       <input type="hidden" name="selected_urls_list[]" value="${element.value}">
-      <a href="${resultUrl}" target="_blank"><span>${element.value}</span></a>
+      <a href="${resultUrl}"><span>${element.value}</span></a>
       <button type="button" onclick="removeSelectedURLElement(this)">X</button>
     `;
     wrap.appendChild(div);
@@ -133,7 +133,7 @@
               div.className = 'selected-url';
               div.innerHTML = `
                   <input type="hidden" name="selected_urls_list[]" value="${list[i]}">
-                  <a href="${resultUrl}" target="_blank"><span>${list[i]}</span></a>
+                  <a href="${resultUrl}"><span>${list[i]}</span></a>
                   <button type="button" onclick="removeSelectedURLElement(this)">X</button>
               `;
               wrap.appendChild(div);

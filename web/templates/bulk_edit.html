@@ -13,7 +13,7 @@
                     {% for url in selected_urls %}
                     <div class="selected-url">
                         <input type="hidden" name="selected_urls_list[]" value="{{url}}">
-                        <a href="{{ url_for('detail', url=url, show=show) }}" target="_blank"><span>{{url}}</span></a>
+                        <a href="{{ url_for('detail', url=url, show=show) }}"><span>{{url}}</span></a>
                     </div>
                     {% endfor %}
                 </div>
