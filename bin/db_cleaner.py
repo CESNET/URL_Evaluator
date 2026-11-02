@@ -54,7 +54,10 @@ def db_cleaner():
             (cutoff_invalid,),
         ).fetchall()]
 
-        urls_to_delete = list(dict.fromkeys(urls_inactive + urls_invalid))
+        # A URL both inactive and invalid is counted (and deleted) once, as inactive
+        inactive = set(urls_inactive)
+        urls_invalid = [url for url in urls_invalid if url not in inactive]
+        urls_to_delete = urls_inactive + urls_invalid
         num_deleted_inactive = len(urls_inactive)
         num_deleted_invalid = len(urls_invalid)
         logger.debug(f"Found {num_deleted_inactive} inactive URLs (last seen before {cutoff_inactive}) "
