@@ -130,3 +130,6 @@ dmypy.json
 .pyre/
 
 helper_dev_notes_scripts_etc/
+
+# Claude Code
+.claude/
