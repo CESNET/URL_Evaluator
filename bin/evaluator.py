@@ -114,6 +114,18 @@ def vt_stats_analysis(stats):
     return 'unclassified'
 
 
+def vt_daily_quota_still_exceeded():
+    """
+    True while the VT daily quota is exceeded; resets the flag once a new day
+    (UTC) has started. Checked by next_url() too, so URLs postponed by the quota
+    are picked again after the reset even when no new URL arrives.
+    """
+    global vt_daily_quota_exceeded
+    if vt_daily_quota_exceeded and vt_daily_quota_timestamp.date() < datetime.now(timezone.utc).date():
+        vt_daily_quota_exceeded = False
+    return vt_daily_quota_exceeded
+
+
 def vt_request(resource_type, resource_id):
     """
     Perform a VirusTotal API request for files or urls and check last analysis stats
@@ -127,13 +139,10 @@ def vt_request(resource_type, resource_id):
 
     result = dict(classification="unclassified", classification_reason="No entry")
 
-    # Reset daily quota if needed
-    if vt_daily_quota_exceeded:
-        if vt_daily_quota_timestamp.date() < datetime.now(timezone.utc).date():
-            vt_daily_quota_exceeded = False
-        else:
-            result.update(classification_reason="VT limit exceeded")
-            return result
+    # Skip VT until the daily quota is reset
+    if vt_daily_quota_still_exceeded():
+        result.update(classification_reason="VT limit exceeded")
+        return result
 
     # Wait for minute quota if exceeded
     if vt_minute_quota_cnt >= vt_minute_quota:
@@ -644,7 +653,7 @@ def next_url():
     Return the next URL waiting for evaluation, or None. While the VT daily
     quota is exceeded, URLs postponed until the quota reset are skipped.
     """
-    row = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_exceeded else "") + " LIMIT 1;").fetchone()
+    row = db.execute("SELECT url FROM urls WHERE evaluated = 'no'" + (" AND eval_later = 'no'" if vt_daily_quota_still_exceeded() else "") + " LIMIT 1;").fetchone()
     return row[0] if row else None
 
 
