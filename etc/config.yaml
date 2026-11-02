@@ -94,6 +94,12 @@ urlhaus_blacklist_url: "https://urlhaus.abuse.ch/downloads/text/"
 urlhaus_detail_url: "https://urlhaus-api.abuse.ch/v1/url/"
 urlhaus_submit_url: "https://urlhaus.abuse.ch/api/"
 urlhaus_key: "!!! CHANGE THIS !!!"
+# evaluator2urlhaus: URLs sent in one submit request
+urlhaus_batch_size: 50
+# evaluator2urlhaus: only URLs whose latest download (HTTP 200 + payload) is at most this old are sent
+urlhaus_max_fetch_age_hours: 24
+# evaluator2urlhaus: tags added to every submission, e.g. ["honeypot"]
+urlhaus_extra_tags: []
 
 # MalwareBazaar
 mb_url: "https://mb-api.abuse.ch/api/v1/"

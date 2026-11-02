@@ -9,6 +9,9 @@ on the `http_mock` fixture (responses.RequestsMock).
 import json
 import os
 import re
+from urllib.parse import parse_qs
+
+import responses
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
@@ -35,6 +38,17 @@ def mock_blacklist(http_mock, config, urls=None):
     """URLhaus text blacklist: the given URLs, or tests/data/urlhaus/blacklist.txt."""
     body = "\n".join(["# test blacklist", *urls]) if urls is not None else load_bytes("urlhaus", "blacklist.txt")
     return http_mock.get(config.urlhaus_blacklist_url, body=body)
+
+
+def mock_urlhaus_lookup(http_mock, config, known=(), status=200):
+    """
+    URLhaus POST /v1/url/: query_status "ok" for the `known` URLs, "no_results"
+    for the rest (or an HTTP error `status`). Lookups are in `http_mock.calls`.
+    """
+    def callback(request):
+        url = parse_qs(request.body)["url"][0]
+        return status, {}, json.dumps({"query_status": "ok" if url in known else "no_results"})
+    http_mock.add_callback(responses.POST, config.urlhaus_detail_url, callback=callback)
 
 
 def mock_mb(http_mock, config, known=False):
