@@ -98,7 +98,6 @@ def test_activity_scanner_detects_content_change_and_inactivity(
         return db.execute("SELECT status, status_changed FROM urls").fetchone()
 
     assert scan("echo v1\n") == ("active", "yes")
-    db.execute("UPDATE urls SET status_changed = 'no'")
     assert scan("echo v1\n") == ("active", "no")
     assert scan("echo v2\n") == ("active", "no")
     assert scan(status=404) == ("inactive", "yes")

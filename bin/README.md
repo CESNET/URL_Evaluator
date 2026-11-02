@@ -50,16 +50,16 @@ Runs on the cron schedule `scheduler.activity_scanner`. It runs immediately on s
 
 1. **Start or resume a run**: if the last row in `activity_scanner_runs` has no `finished_at`, the run is resumed. Otherwise a new run is created.
 2. **Load URLs**: all URLs in `urls` that are not yet in `activity_scanner_progress` for this run.
-3. **Split into threads**: one worker thread per 1000 URLs.
+3. **Split into threads**: one worker thread per 1000 URLs (`URLS_PER_THREAD`).
 4. **Per URL** (`thread_func`):
    1. **Validity**: `is_valid()`. Invalid URLs are marked processed and skipped.
-   2. **Fetch**: GET with a 10 s timeout. An OK response means `active`. An error status, connection error or timeout means `inactive`.
-   3. **Store content** (`_record_daily_fetch`): the body is deduplicated into `content_dir`, followed by a Hybrid Analysis SHA-256 check (`check_content_outcome`). A `download_observation` row is always written, with or without a body.
-   4. **Update `urls`**: `status`, `last_scanned`, and `last_active` (only when active). Sets `status_changed = 'yes'` when the status flips.
-   5. **Mark processed**: the URL is added to `activity_scanner_progress`.
+   2. **Fetch**: GET with a 10 s timeout. An OK response means `active`; a body larger than `max_file_size` (by `Content-Length`) is not downloaded (`fetch_error = 'oversized'`). An error status or any request error (connection error, timeout, too many redirects, …) means `inactive`.
+   3. **Store content** (`_record_daily_fetch`): the body is deduplicated into `content_dir` and a `download_observation` row is written (always, with or without a body). Then the SHA-256 is looked up on Hybrid Analysis (`check_content_outcome`); a found report of a waiting submission classifies the URL (see the evaluator section).
+   4. **Update `urls`**: `status`, `last_scanned`, and `last_active` (only when active). `status_changed` is `'yes'` when the status flipped in this scan, otherwise `'no'`.
+   5. **Mark processed**: the URL is added to `activity_scanner_progress`. An unexpected error while scanning a URL is logged and counted (`urls_failed`); the URL is marked processed too, the thread goes on and the next daily run retries it.
 5. **Finish**: once all threads have joined, the run gets `finished_at` and its progress rows are deleted. If the run was stopped with URLs left, it stays open and is resumed on the next start.
-   Then the reports of samples submitted from the web UI that the scheduled fetches did not find are fetched (`fetch_unfinished_results`). Samples whose hash was already queried in this run are skipped.
-6. **Summary** (`_log_run_summary`): logs URLs updated, active, inactive and status-changed, plus Hybrid Analysis usage. It warns on HTTP 429 or when the peak reaches 200 requests/min.
+   Then the reports of samples submitted from the web UI that the scheduled fetches did not find are fetched (`fetch_unfinished_results`). Samples whose hash was already queried in this run (also before an interruption) are skipped.
+6. **Summary** (`_log_run_summary`): logs URLs updated, active, inactive, status-changed and failed, plus Hybrid Analysis usage. It warns on HTTP 429 or when the peak reaches 200 requests/min.
 
 ### Scheduled fetches of submitted samples (`ha_fetch_scheduler.FetchJob`)
 

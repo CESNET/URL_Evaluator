@@ -88,12 +88,7 @@ def write_content_file(content_dir, sha256, data):
             f"Could not write content file {tmp_path} (sha256={sha256}, "
             f"size {len(data)} bytes) – check free disk space and permissions: {e}"
         )
-        # Best-effort cleanup of the partial temp file.
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
+        _remove_temp_file(tmp_path)
         raise
     try:
         os.replace(tmp_path, path)
@@ -102,9 +97,19 @@ def write_content_file(content_dir, sha256, data):
             f"Could not move temp file {tmp_path} to final location {path} "
             f"(sha256={sha256}): {e}"
         )
+        _remove_temp_file(tmp_path)
         raise
     logger.info(f"Stored new content sample {sha256[:12]}… ({len(data)} bytes) at {path}")
     return path
+
+
+def _remove_temp_file(tmp_path):
+    """Best-effort cleanup of a partial temp file left by a failed write."""
+    try:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    except OSError:
+        pass
 
 
 def remove_content_file(file_path):

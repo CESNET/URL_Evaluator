@@ -28,7 +28,10 @@ except Exception:
     hybrid_analysis = None
     ha_fetch_scheduler = None
 
-logger = logging.getLogger("activity_status.py")
+logger = logging.getLogger("activity_scanner.py")
+
+# One worker thread per chunk of this many URLs, so URLs are re-polled in parallel.
+URLS_PER_THREAD = 1000
 
 # Module state, set by init() (called from __main__ and by tests)
 config = None
@@ -75,18 +78,13 @@ def _record_daily_fetch(db, url, response, body, fetched_at, fetch_error=None):
         logger.warning("Content store module not available, skipping daily fetch record for %s", url)
         return
 
-    content_id = None
+    content_id = sha256 = None
     if body is None:
         # No body to store (e.g. error response), but the download observation
         # (status code, headers, ...) is still recorded below.
         logger.warning(f"Thread: no body for {url}, status code is {getattr(response, 'status_code', None)} – recording observation without content")
         if fetch_error is None:
-            if response is None:
-                fetch_error = "connection_error"
-            elif not response.ok:
-                fetch_error = "http_error"
-            else:
-                fetch_error = "body_unreadable"
+            fetch_error = "http_error" if not response.ok else "body_unreadable"
     else:
         content_dir = getattr(config, "content_dir", None)
         if not content_dir:
@@ -115,15 +113,8 @@ def _record_daily_fetch(db, url, response, body, fetched_at, fetch_error=None):
                     )
                     fetch_error = "storage_failed"
                 else:
-                    content_id = info.get("id")
+                    content_id, sha256 = info.get("id"), info.get("sha256")
                     _count("content_stored")
-                    # Has this payload already been analysed on Hybrid Analysis?
-                    if hybrid_analysis is not None:
-                        result, outcome = hybrid_analysis.check_content_outcome(
-                            db, config, content_id, info.get("sha256"))
-                        _count(f"ha_{outcome}")
-                        if result and result.get("tested") and outcome in ("checked", "cached"):
-                            _count("ha_tested")
     try:
         content_store.record_download_observation(
             db,
@@ -138,6 +129,37 @@ def _record_daily_fetch(db, url, response, body, fetched_at, fetch_error=None):
     except Exception as e:
         logger.warning(f"Thread: could not record daily fetch for {url}: {e}")
 
+    # Has this payload already been analysed on Hybrid Analysis? Looked up after
+    # the observation is recorded: a found report of a waiting submission
+    # classifies the URLs linked to the content by their observations.
+    if content_id is not None and hybrid_analysis is not None:
+        result, outcome = hybrid_analysis.check_content_outcome(db, config, content_id, sha256)
+        _count(f"ha_{outcome}")
+        if result and result.get("tested") and outcome in ("checked", "cached"):
+            _count("ha_tested")
+
+
+def _fetch(thread_id, url):
+    """
+    GET `url` (body only up to max_file_size). Returns (status, response,
+    body, fetch_error): any request error means 'inactive'.
+    """
+    try:
+        with requests.get(url, stream=True, proxies=proxies, timeout=10) as r:
+            if not r.ok:
+                return "inactive", r, None, None
+            size = r.headers.get("Content-Length")
+            if size and size.isdigit() and int(size) / (1024 ** 2) > config.max_file_size:
+                return "active", r, None, "oversized"
+            try:
+                return "active", r, r.content, None
+            except Exception:
+                logger.warning(f"Thread {thread_id}: Could not read response body for {url}, skipping content-change detection")
+                return "active", r, None, "body_unreadable"
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Thread {thread_id}: {type(e).__name__} for {url}, marking as inactive")
+        return "inactive", None, None, content_store.fetch_error_from_exception(e) if content_store else None
+
 
 def thread_func(thread_id, run_id, urls):
     """Worker process: re-poll each URL, record a download observation (content
@@ -149,47 +171,36 @@ def thread_func(thread_id, run_id, urls):
             if stop_event.is_set():
                 logger.info(f"Thread {thread_id}: Stop requested, leaving remaining URLs for the resumed run")
                 break
-            if not is_valid(url):
-                _mark_processed(db, run_id, url)
-                continue
-
-            # Send a HTTP request to check whether the URL is active
-            fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            body = None
-            resp = None
-            fetch_error = None
-            try:
-                with requests.get(url, stream=True, proxies=proxies, timeout=10) as r:
-                    resp = r
-                    if r.ok:
-                        new_status = "active"
-                        try:
-                            body = r.content
-                        except Exception:
-                            logger.warning(f"Thread {thread_id}: Could not read response body for {url}, skipping content-change detection")
-                            body = None
-                    else:
-                        new_status = "inactive"
-            except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
-                logger.debug(f"Thread {thread_id}: Connection error or timeout for {url}, marking as inactive")
-                new_status = "inactive"
-                fetch_error = content_store.fetch_error_from_exception(e) if content_store else None
-
-            # Daily content-change detection / history (best effort)
-            _record_daily_fetch(db, url, resp, body, fetched_at, fetch_error)
-
-            # Update DB record
-            logger.debug(f'Thread {thread_id}: Updating DB record for {url}')
-            last_active = datetime.now(timezone.utc).date() if new_status == 'active' else last_active
-            db.execute("UPDATE urls SET status = ?, last_active = ?, last_scanned = ? WHERE url = ?",
-                       (new_status, last_active, fetched_at, url))
-            _count("urls_updated")
-            _count(f"urls_{new_status}")
-            if new_status != current_status:
-                db.execute("UPDATE urls SET status_changed = 'yes' WHERE url = ?", (url,))
-                _count("urls_status_changed")
+            if is_valid(url):
+                try:
+                    _scan_url(db, thread_id, url, current_status, last_active)
+                except Exception as e:
+                    # Never let one URL stop the thread: the rest of its chunk would not be
+                    # scanned. The URL is retried by the next daily run.
+                    logger.exception(f"Thread {thread_id}: Scanning {url} failed: {e}")
+                    _count("urls_failed")
             _mark_processed(db, run_id, url)
     logger.info(f'Thread {thread_id}: Finished')
+
+
+def _scan_url(db, thread_id, url, current_status, last_active):
+    """Fetch one URL, record the download and update its status."""
+    fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    new_status, resp, body, fetch_error = _fetch(thread_id, url)
+
+    # Daily content-change detection / history (best effort)
+    _record_daily_fetch(db, url, resp, body, fetched_at, fetch_error)
+
+    logger.debug(f'Thread {thread_id}: Updating DB record for {url}')
+    if new_status == "active":
+        last_active = datetime.now(timezone.utc).date().isoformat()
+    changed = new_status != current_status
+    db.execute("UPDATE urls SET status = ?, status_changed = ?, last_active = ?, last_scanned = ? WHERE url = ?",
+               (new_status, "yes" if changed else "no", last_active, fetched_at, url))
+    _count("urls_updated")
+    _count(f"urls_{new_status}")
+    if changed:
+        _count("urls_status_changed")
 
 
 def _mark_processed(db, run_id, url):
@@ -245,11 +256,12 @@ def _run():
         # Resume the last run when it was interrupted, otherwise start a new one.
         previous = unfinished_run(db)
         if previous:
-            run_id = previous[0]
+            # started_at of the original run: hashes queried before the interruption count as queried in this run
+            run_id, started_at = previous
             done = db.execute("SELECT COUNT(*) FROM activity_scanner_progress WHERE run_id = ?", (run_id,)).fetchone()[0]
             logger.info(f"Resuming interrupted run {run_id} started at {previous[1]} ({done} URLs already processed)")
         else:
-            run_id = db.execute("INSERT INTO activity_scanner_runs (started_at) VALUES (?)", (_now(),)).lastrowid
+            run_id = db.execute("INSERT INTO activity_scanner_runs (started_at) VALUES (?)", (started_at,)).lastrowid
         urls = db.execute(
             "SELECT url, status, last_active FROM urls WHERE NOT EXISTS "
             "(SELECT 1 FROM activity_scanner_progress p WHERE p.run_id = ? AND p.url = urls.url)",
@@ -257,12 +269,11 @@ def _run():
         ).fetchall()
     logger.info(f"Run {run_id}: loaded {len(urls)} URLs, processing...")
 
-    # Chunking: spawn one worker thread per chunk of max 1000 URLs, so URLs are re-polled in parallel.
-    url_limit = 1000
+    # Chunking: spawn one worker thread per chunk of max URLS_PER_THREAD URLs.
     thread_id = 1
     threads = []
-    for start_idx in range(0, len(urls), url_limit):
-        chunk = urls[start_idx:start_idx + url_limit]
+    for start_idx in range(0, len(urls), URLS_PER_THREAD):
+        chunk = urls[start_idx:start_idx + URLS_PER_THREAD]
         logger.debug(f'Thread {thread_id}: first = {start_idx}, last = {len(chunk)}')
         thread = threading.Thread(target=thread_func, args=(thread_id, run_id, chunk))
         thread_id += 1
@@ -305,6 +316,9 @@ def _log_run_summary(urls_loaded, elapsed, interrupted=False):
         f"(active {st.get('urls_active', 0)}, inactive {st.get('urls_inactive', 0)}, "
         f"status changed {st.get('urls_status_changed', 0)}), content stored for {st.get('content_stored', 0)} URLs"
     )
+    if st.get("urls_failed"):
+        logger.warning(f"{st['urls_failed']} URLs could not be scanned (see the errors above), "
+                       f"they are retried by the next run")
     if hybrid_analysis is None:
         return
     ha = hybrid_analysis.request_stats()

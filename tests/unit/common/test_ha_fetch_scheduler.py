@@ -312,3 +312,19 @@ def test_fetch_job_schedule_polls_every_60_s(config):
     job.schedule(scheduler)
 
     scheduler.add_job.assert_called_once_with(job.run, "interval", seconds=60)
+
+
+def test_unfinished_fetch_error_is_counted_and_next_is_fetched(http_mock, config, db, monkeypatch):
+    _, failing = _submission(db, next_fetch_at=None)
+    _, other = _submission(db, sha256="b" * 64, next_fetch_at=None)
+    fetch_result = ha_fetch_scheduler._fetch_result
+
+    def fail_first(db_conn, cfg, submission_id, *args):
+        if submission_id == failing:
+            raise RuntimeError("database is locked")
+        return fetch_result(db_conn, cfg, submission_id, *args)
+    monkeypatch.setattr(ha_fetch_scheduler, "_fetch_result", fail_first)
+    mock_ha_overview(http_mock, config, status=200)
+
+    assert ha_fetch_scheduler.fetch_unfinished_results(db, config) == {"failed": 1, "found": 1}
+    assert (_row(db, failing)[0], _row(db, other)[0]) == ("pending", "done")
