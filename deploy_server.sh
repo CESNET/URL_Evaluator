@@ -24,7 +24,11 @@ if [ "$GUI_ONLY" -eq 0 ]; then
     done
 fi
 
-./install/migrate.sh
+# Pri chybe migrácie skončiť: služby zostanú zastavené, záloha DB je v <db_dir>/backup/
+if ! ./install/migrate.sh; then
+    echo "Migration failed - services were NOT restarted, check the output above"
+    exit 1
+fi
 
 # 2. Reštart GUI (httpd)
 sudo systemctl restart httpd 

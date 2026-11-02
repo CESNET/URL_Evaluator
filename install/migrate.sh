@@ -6,7 +6,9 @@
 #      If none are pending, exit cleanly without touching the DB or backup dir.
 #   2. Delete any previous backup in the backup directory.
 #   3. Backup the current active DB into the backup directory (kept until next run).
-#   4. Apply every pending migration in order, recording each applied file in
+#   4. Dry run: apply the pending migrations to a copy of the backup and check its
+#      integrity; if anything fails the active DB is left untouched.
+#   5. Apply every pending migration in order, recording each applied file in
 #      the schema_migrations table.
 #
 # The migration SQL files are the only part that changes as new versions are released.
@@ -87,7 +89,41 @@ if ! sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"; then
 fi
 echo "Backup stored at $BACKUP_FILE"
 
-# --- 4. Apply pending migrations in order ---
+# --- 4. Dry run on a copy of the backup (active DB untouched until it passes) ---
+echob "** Dry run of pending migrations on a copy of the DB **"
+DRYRUN_FILE="$BACKUP_DIR/db_dryrun.sqlite"
+
+dryrun_fail() {
+    rm -f "$DRYRUN_FILE"
+    echor "Dry run failed: $1 - database left untouched, no migration applied"
+    exit 1
+}
+
+if ! cp "$BACKUP_FILE" "$DRYRUN_FILE"; then
+    dryrun_fail "could not copy $BACKUP_FILE"
+fi
+# Rows from before the migration may already violate FKs; the migration must not add new ones
+fk_before=$(sqlite3 "$DRYRUN_FILE" "SELECT COUNT(*) FROM pragma_foreign_key_check;")
+
+for migration in $pending; do
+    if ! sqlite3 "$DRYRUN_FILE" ".bail on" ".read $migration" > /dev/null; then
+        dryrun_fail "$(basename "$migration") failed"
+    fi
+done
+
+integrity=$(sqlite3 "$DRYRUN_FILE" "PRAGMA integrity_check;")
+if [ "$integrity" != "ok" ]; then
+    dryrun_fail "integrity_check reported: $integrity"
+fi
+fk_after=$(sqlite3 "$DRYRUN_FILE" "SELECT COUNT(*) FROM pragma_foreign_key_check;")
+if [ "$fk_after" -gt "$fk_before" ]; then
+    dryrun_fail "foreign key violations increased from $fk_before to $fk_after"
+fi
+
+rm -f "$DRYRUN_FILE"
+echo "Dry run passed (foreign key violations: $fk_after)"
+
+# --- 5. Apply pending migrations in order ---
 echob "** Applying migrations **"
 
 applied=0
