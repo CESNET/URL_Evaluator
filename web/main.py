@@ -18,7 +18,7 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, get_domain, split_url_lines, add_urls_bulk
+from common.utils import is_valid, get_domain, split_url_lines, add_urls_bulk, mark_source_urls_malicious
 try:
     from common import content_store
 except Exception:
@@ -32,11 +32,11 @@ try:
 except Exception:
     CONTENT_TYPE_CATEGORIES = {}
 
-# Global variables
-page = 1
 rows_per_page = 25
-filters = ""
-filter_params = {}
+# Columns the URL list can be sorted by (ORDER BY cannot take a bound parameter)
+SORT_COLUMNS = ("url", "status", "first_seen", "last_seen", "occurrences", "classification", "classification_reason")
+# Values allowed by the CHECK constraint of urls.classification
+CLASSIFICATIONS = ("malicious", "harmless", "unreachable", "unclassified", "invalid", "miner")
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Receive messages from Warden, find suspicious URLs and save them to evaluator database.")
@@ -153,7 +153,8 @@ ANONYMOUS_USER = "--unknown--"
 # Actors that represent automated system scripts (not human analysts). These
 # must always be shown verbatim in the classification history, even to public
 # viewers; human actors are anonymised instead.
-SYSTEM_ACTORS = {"system", "evaluator", "evaluator-backprop", "session-ddos"}
+SYSTEM_ACTORS = {"system", "evaluator", "evaluator-backprop", "session-ddos",
+                 "hybrid-analysis", "hybrid-analysis-backprop"}
 
 
 def get_user(environ):
@@ -272,50 +273,64 @@ def get_ip(url):
         return ""
 
 
-def parse_filters():
-    parsed_filters = " WHERE url NOT NULL"
+def parse_filters(filter_params):
+    """
+    WHERE and ORDER BY clauses of the URL list for `filter_params`, and their
+    parameters. User input only reaches the SQL as a bound parameter; the sort
+    column and order are whitelisted.
+    """
+    clauses, params = ["url NOT NULL"], []
     for param, value in filter_params.items():
         if param == "order" or param == "order_key" or value == "":
             continue
         if param == "classification":
-            parsed_filters += f" AND classification='{value}'"
+            clauses.append("classification = ?")
+            params.append(value)
         if param == "url":
-            parsed_filters += f" AND url LIKE '%{value}%'"
+            clauses.append("url LIKE ?")
+            params.append(f"%{value}%")
         # Quick search: URL substring, or (for a hex-only query of at least 8
         # characters) a substring of the SHA-256 of any downloaded content.
         if param == "q":
-            clause = f"url LIKE '%{value}%'"
+            clause = "url LIKE ?"
+            params.append(f"%{value}%")
             sha256 = value.lower()
             if len(sha256) >= 8 and re.fullmatch(r"[0-9a-f]+", sha256):
                 clause += (
                     " OR EXISTS (SELECT 1 FROM download_observations d "
                     "JOIN content c ON c.id = d.content_id "
-                    f"WHERE d.url = urls.url AND c.sha256 LIKE '%{sha256}%')"
+                    "WHERE d.url = urls.url AND c.sha256 LIKE ?)"
                 )
-            parsed_filters += f" AND ({clause})"
+                params.append(f"%{sha256}%")
+            clauses.append(f"({clause})")
         if param == "note":
-            parsed_filters += f" AND note LIKE '%{value}%'"
+            clauses.append("note LIKE ?")
+            params.append(f"%{value}%")
         if param == "reason":
-            parsed_filters += f" AND classification_reason LIKE '%{value}%'"
+            clauses.append("classification_reason LIKE ?")
+            params.append(f"%{value}%")
         if param == "status":
-            parsed_filters += f" AND status='{value}'"
+            clauses.append("status = ?")
+            params.append(value)
         if param == "src":
-            parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
+            clauses.append("url IN (SELECT url FROM url_source WHERE source = ?)")
+            params.append(value)
         if param == "evaluated":
-            parsed_filters += f" AND evaluated='{value}'"
+            clauses.append("evaluated = ?")
+            params.append(value)
         # Filter on the SHA-256 of any content downloaded from the URL (full
-        # match only). Anything other than 64 hex digits matches nothing, so
-        # the value never reaches SQL unchecked.
+        # match only). Anything other than 64 hex digits matches nothing.
         if param == "sha256":
             sha256 = value.lower()
             if re.fullmatch(r"[0-9a-f]{64}", sha256):
-                parsed_filters += (
-                    " AND EXISTS (SELECT 1 FROM download_observations d "
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM download_observations d "
                     "JOIN content c ON c.id = d.content_id "
-                    f"WHERE d.url = urls.url AND c.sha256 = '{sha256}')"
+                    "WHERE d.url = urls.url AND c.sha256 = ?)"
                 )
+                params.append(sha256)
             else:
-                parsed_filters += " AND 0"
+                clauses.append("0")
         # Filter on whether the URL has any stored (downloadable) content.
         # "yes" -> at least one download_observations row references a content
         # row; "no" -> no such row. Uses EXISTS/NOT EXISTS against
@@ -328,9 +343,9 @@ def parse_filters():
                 "WHERE d.url = urls.url AND d.content_id IS NOT NULL)"
             )
             if value == "yes":
-                parsed_filters += f" AND {exists_clause}"
+                clauses.append(exists_clause)
             elif value == "no":
-                parsed_filters += f" AND NOT {exists_clause}"
+                clauses.append(f"NOT {exists_clause}")
         # Filter on the Hybrid Analysis lookup stored per content, checked on
         # the newest downloaded content of the URL (same ordering as
         # content_store.latest_content_id):
@@ -338,46 +353,38 @@ def parse_filters():
         # "not_analysed" -> GET /overview/{sha256} answered HTTP 404 (hash never analysed)
         sandbox_status = {"analysed": 200, "not_analysed": 404}
         if param == "sandbox" and value in sandbox_status:
-            parsed_filters += (
-                " AND (SELECT CASE WHEN json_valid(c.sandbox_info) "  # json_extract() raises on invalid JSON
+            clauses.append(
+                "(SELECT CASE WHEN json_valid(c.sandbox_info) "  # json_extract() raises on invalid JSON
                 "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') END "
                 "FROM download_observations d JOIN content c ON c.id = d.content_id "
                 "WHERE d.url = urls.url "
-                f"ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = {sandbox_status[value]}"
+                "ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = ?"
             )
+            params.append(sandbox_status[value])
         # Filter on the content type detected by Magika: URLs that served
         # content of the given category in any downloaded version. Only known
-        # category names reach the SQL.
+        # category names are used.
         if param == "content_type" and value in CONTENT_TYPE_CATEGORIES:
-            parsed_filters += (
-                " AND EXISTS (SELECT 1 FROM download_observations d "
+            clauses.append(
+                "EXISTS (SELECT 1 FROM download_observations d "
                 "JOIN content c ON c.id = d.content_id "
-                f"WHERE d.url = urls.url AND c.file_category = '{value}')"
+                "WHERE d.url = urls.url AND c.file_category = ?)"
             )
-    parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
-    return parsed_filters
-
-
-def back_propagation(db, url):
-    rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-    if rows:
-        src_urls = ", ".join(f"'{row[0]}'" for row in rows)
-        db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
-        for row in rows:
-            db.record_classification(
-                row[0],
-                "malicious",
-                reason="Downloading from malicious URL",
-                actor="evaluator-backprop"
-            )
+            params.append(value)
+    order_key = filter_params.get("order_key")
+    order_key = order_key if order_key in SORT_COLUMNS else "last_seen"
+    order = "ASC" if str(filter_params.get("order")).lower() == "asc" else "DESC"
+    return f" WHERE {' AND '.join(clauses)} ORDER BY {order_key} {order}", params
 
 
 @app.route('/', methods=['GET', 'POST'])
 def list_all():
-    global page
-    global filter_params
-
     user = get_user(flask.request.environ)
+
+    # Filters and the current page of this user (kept in their session, every
+    # user has their own)
+    filter_params = dict(flask.session.get("filter_params", {}))
+    page = flask.session.get("page", 1)
 
     # clear filters
     clear = flask.request.args.get('clear_filters')
@@ -387,7 +394,10 @@ def list_all():
     # get current page
     page_arg = flask.request.args.get('page')
     if page_arg:
-        page = int(page_arg)
+        try:
+            page = max(int(page_arg), 1)
+        except ValueError:
+            page = 1
 
     # variables for adding new urls (bulk add returns per-URL results)
     adding = ""
@@ -478,7 +488,9 @@ def list_all():
 
     filter_params["order"] = order
     filter_params["order_key"] = order_key
-    filters = parse_filters()
+    filters, params = parse_filters(filter_params)
+    flask.session["filter_params"] = filter_params
+    flask.session["page"] = page
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
@@ -493,14 +505,15 @@ def list_all():
 
     with SQLiteWrapper(config.db_path) as db:
         # get url details
-        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
+        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + " LIMIT ? OFFSET ?",
+                              (*params, rows_per_page, rows_per_page * (page - 1))).fetchall()
 
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()
 
         # get number of pages and URL counts (record_count respects the active
         # filters, total_count is the size of the whole URL table)
-        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
+        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters, params).fetchall()[0][0]
         total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
         page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
 
@@ -745,19 +758,22 @@ def edit_detail():
         return make_response(jsonify({'error': 'Forbidden'}), 403)
 
     with SQLiteWrapper(config.db_path) as db:
+        url_list = db.execute("SELECT * FROM urls WHERE url = ? LIMIT 1", (url,)).fetchall()
+        if not url_list:
+            abort(404)
         if flask.request.method == 'POST':
             note = flask.request.form['note']
             classification = flask.request.form['class']
             reason = flask.request.form['reason']
+            if classification not in CLASSIFICATIONS:
+                return make_response(jsonify({'error': 'Unknown classification'}), 400)
             evaluated = "yes" if classification != "unclassified" else "no"
             db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
             # Analyst decision -> record in the classification history
             db.record_classification(url, classification, reason=reason, note=note, actor=user)
             if classification == "malicious":
-                back_propagation(db, url)
+                mark_source_urls_malicious(db, url, f"{user}-backprop")
             return redirect(url_for("list_all", show=show))
-
-        url_list = db.execute("SELECT * FROM urls WHERE url = ? LIMIT 1", (url,)).fetchall()
 
     return render_template('edit_detail.html', user=user, url=url_list[0], show=show)
 
@@ -773,9 +789,9 @@ def bulk_edit():
             return make_response(jsonify({'error': 'Forbidden'}), 403)
         selected_urls = flask.request.form.getlist('selected_urls_list[]')
         if selected_urls:
-            urls_string = "('" + "', '".join(selected_urls) + "')"
+            placeholders = ", ".join("?" * len(selected_urls))
             with SQLiteWrapper(config.db_path) as db:
-                db.execute(f"UPDATE urls SET evaluated = 'no' WHERE url IN {urls_string}")
+                db.execute(f"UPDATE urls SET evaluated = 'no' WHERE url IN ({placeholders})", selected_urls)
         return redirect(url_for("list_all"))
 
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
@@ -793,28 +809,37 @@ def bulk_edit_action():
     note = flask.request.form['note']
     classification = flask.request.form['class']
     classification_reason = flask.request.form['reason']
-    evaluated = "yes" if classification != "unclassified" else "no"
-    urls_string = "('" + "', '".join(selected_urls) + "')"
+    if classification and classification not in CLASSIFICATIONS:
+        return make_response(jsonify({'error': 'Unknown classification'}), 400)
+    if not selected_urls:
+        return redirect(url_for("list_all"))
+    placeholders = ", ".join("?" * len(selected_urls))
     with SQLiteWrapper(config.db_path) as db:
         if note:
-            db.execute(f"UPDATE urls SET note = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (note, user, evaluated))
+            db.execute(f"UPDATE urls SET note = ?, last_edit = ? WHERE url IN ({placeholders})", (note, user, *selected_urls))
         if classification:
-            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
+            # Only a new classification decides whether the URL still waits for evaluation
+            evaluated = "yes" if classification != "unclassified" else "no"
+            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN ({placeholders})",
+                       (classification, user, evaluated, *selected_urls))
         if classification_reason:
-            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ? WHERE url IN ({placeholders})",
+                       (classification_reason, user, *selected_urls))
         # Analyst decision -> record in the classification history for each URL
+        # (with its current classification when only the note / reason changed)
         if classification or note or classification_reason:
             for url in selected_urls:
-                db.record_classification(
-                    url,
-                    classification or None,
-                    reason=classification_reason or None,
-                    note=note or None,
-                    actor=user
-                )
+                if current := db.execute("SELECT classification FROM urls WHERE url = ?", (url,)).fetchone():
+                    db.record_classification(
+                        url,
+                        current[0],
+                        reason=classification_reason or None,
+                        note=note or None,
+                        actor=user
+                    )
         if classification == "malicious":
             for url in selected_urls:
-                back_propagation(db, url)
+                mark_source_urls_malicious(db, url, f"{user}-backprop")
     return redirect(url_for("list_all"))
 
 

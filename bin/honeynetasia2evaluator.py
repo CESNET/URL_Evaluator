@@ -7,7 +7,7 @@ import requests
 import logging
 import signal
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from apscheduler.schedulers.background import BlockingScheduler
 
 # Add to path the "one directory above the current file location" to find modules from "common"
@@ -31,8 +31,12 @@ def init(cfg):
 def honeynetasia2evaluator():
     logger.info("Job started")
     logger.debug(f"Downloading data from {config.hna_url}")
-    current_date = datetime.date(datetime.utcnow())
-    response = requests.get(config.hna_url, timeout=30)
+    current_date = datetime.now(timezone.utc).date().isoformat()
+    try:
+        response = requests.get(config.hna_url, timeout=30)
+    except requests.RequestException as e:
+        logger.error(f"Error while downloading data: {type(e).__name__}: {e}")
+        return
     if response.status_code != 200:
         logger.error(f"Error while downloading data. Status code: {response.status_code}")
         return
@@ -41,9 +45,9 @@ def honeynetasia2evaluator():
     num_inserted = 0
     with SQLiteWrapper(config.db_path) as db:
         for line in response.content.splitlines():
-            url = line.decode().strip()
+            url = line.decode(errors="replace").strip()
             # de-sanitize hxxp(s) -> http(s)
-            url = re.sub(r'^hxxp(s?)://', r'http\1://')
+            url = re.sub(r'^hxxp(s?)://', r'http\1://', url)
             if not is_valid(url):
                 logger.warning(f"Invalid URL '{url}' skipped")
                 continue

@@ -114,7 +114,9 @@ def db_cleaner():
         logger.debug("Deleting orphan sessions")
         started = time.monotonic()
         num_deleted_sessions = db.execute(
-            "DELETE FROM sessions WHERE session_hash NOT IN (SELECT session FROM url_session)"
+            # NOT EXISTS, not NOT IN: one NULL url_session.session would make NOT IN match nothing
+            "DELETE FROM sessions WHERE NOT EXISTS "
+            "(SELECT 1 FROM url_session WHERE url_session.session = sessions.session_hash)"
         ).rowcount
         logger.debug(f"Deleted {num_deleted_sessions} orphan sessions in {time.monotonic() - started:.1f} s")
 

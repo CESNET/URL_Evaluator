@@ -20,6 +20,9 @@ from common.db import SQLiteWrapper
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# MISP object template of a URL (etc/misp_objects/url-honeypot-detection)
+OBJECT_NAME = "url-honeypot-detection"
+
 logger = logging.getLogger("evaluator2misp.py")
 
 # Module state, set by init() (called from __main__ and by tests)
@@ -78,6 +81,25 @@ def get_or_create_event(misp):
     return new
 
 
+def our_objects(event):
+    """URL objects created by this exporter (an analyst may add other objects to the event)."""
+    return [obj for obj in event.objects if obj.name == OBJECT_NAME]
+
+
+def update_attribute(obj, relation, attr_type, value, same=lambda old, new: old == new):
+    """
+    Set the attribute `relation` of `obj` to `value`; it is added when the
+    object lacks it (e.g. created by an older version). True when it changed.
+    """
+    if attrs := obj.get_attributes_by_relation(relation):
+        if same(attrs[0].value, value):
+            return False
+        attrs[0].value = value
+    else:
+        obj.add_attribute(object_relation=relation, simple_value=value, Attribute={"type": attr_type, "value": value})
+    return True
+
+
 def create_object(db_row):
     """
     Create new MISP object from a DB row
@@ -93,7 +115,7 @@ def create_object(db_row):
     source = db_row[8]
     ip, domain = extract_ip_domain_port(url)
 
-    new_object = MISPObject("url-honeypot-detection", misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
+    new_object = MISPObject(OBJECT_NAME, misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
 
     # Add URL and set 'to_ids' based on current activity status
     to_ids = True if status == "active" else False
@@ -170,7 +192,7 @@ def sync_urls(misp, db):
     event = get_or_create_event(misp)
 
     # Fetch all URLs currently in MISP
-    misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in event.objects]
+    misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in our_objects(event)]
 
     # Add new URLs
     for url, db_row in db_urls.items():
@@ -179,10 +201,8 @@ def sync_urls(misp, db):
             event.add_object(create_object(db_row))
 
     # Update existing URLs
-    for obj in list(event.objects):
+    for obj in our_objects(event):
         url = obj.get_attributes_by_relation("url")[0]
-        last_seen = obj.get_attributes_by_relation("last-seen")[0]
-        source = obj.get_attributes_by_relation("source")[0]
         if url.value in db_urls:
             if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
                (url.to_ids is True and db_urls[url.value][6] != 'active'):
@@ -191,14 +211,13 @@ def sync_urls(misp, db):
                 url.to_ids = True if db_urls[url.value][6] == 'active' else False
                 if ip := obj.get_attributes_by_relation("ip-dst|port"):
                     ip[0].to_ids = url.to_ids
-            if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
-                # Last seen timestamp is outdated
+            # Last seen timestamp is outdated (the date of the MISP datetime is compared)
+            if update_attribute(obj, "last-seen", "datetime", db_urls[url.value][3],
+                                same=lambda old, new: str(old).startswith(new)):
                 logger.debug(f"Updating last-seen for '{url.value}'")
-                last_seen.value = db_urls[url.value][3]
-            if source.value != db_urls[url.value][8]:
-                # New source(s) reported the URL
+            # New source(s) reported the URL
+            if update_attribute(obj, "source", "text", db_urls[url.value][8]):
                 logger.debug(f"Updating source for '{url.value}'")
-                source.value = db_urls[url.value][8]
         else:
             # URL was deleted, remove it from MISP too
             logger.debug(f"Deleting old URL: {url}")
@@ -241,30 +260,27 @@ def add_yesterdays_sightings(misp, db):
 
 def evaluator2misp():
     logger.info("Job started")
-    db = SQLiteWrapper(config.db_path)
-
+    # A scheduler job only logs failures (no sys.exit), the next run tries again
     try:
         logger.debug(f"Connecting to MISP at {config.misp_url}")
         misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert, debug=False)
     except Exception as e:
         logger.error(f"Error while connecting to MISP: {type(e).__name__}: {e}")
-        sys.exit(1)
+        return
 
-    try:
-        sync_urls(misp, db)
-    except Exception as e:
-        logger.exception(f"Failed to sync data with MISP: {type(e).__name__}: {e}")
-        db.close()
-        sys.exit(2)
+    with SQLiteWrapper(config.db_path) as db:
+        try:
+            sync_urls(misp, db)
+        except Exception as e:
+            logger.exception(f"Failed to sync data with MISP: {type(e).__name__}: {e}")
+            return
 
-    try:
-        add_yesterdays_sightings(misp, db)
-    except Exception as e:
-        logger.exception(f"Failed to add new sightings: {type(e).__name__}: {e}")
-        db.close()
-        sys.exit(3)
+        try:
+            add_yesterdays_sightings(misp, db)
+        except Exception as e:
+            logger.exception(f"Failed to add new sightings: {type(e).__name__}: {e}")
+            return
 
-    db.close()
     logger.info("Job finished")
 
 

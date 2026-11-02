@@ -1,5 +1,10 @@
-from tests.factories import (insert_classification, insert_content, insert_download, insert_observation,
-                             insert_sandbox_submission, insert_source, insert_url)
+import hashlib
+import json
+
+import pytest
+
+from tests.factories import (insert_classification, insert_content, insert_discovered, insert_download,
+                             insert_observation, insert_sandbox_submission, insert_source, insert_url)
 
 ANALYST = {"REMOTE_USER": "alice"}
 URL = "http://evil.test/a.sh"
@@ -31,6 +36,15 @@ def test_classification_history_hides_analyst_names_from_anonymous(web_client, d
 
     assert "Alice Analyst" not in anonymous and "evaluator" in anonymous
     assert "Alice Analyst" in analyst
+
+
+def test_classification_history_shows_hybrid_analysis_to_anonymous(web_client, db):
+    insert_url(db, URL)
+    insert_classification(db, URL, "malicious", reason="Hybrid Analysis check", actor="hybrid-analysis")
+
+    anonymous = web_client.get("/detail", query_string={"url": URL, "tab": "class_history"}).get_data(as_text=True)
+
+    assert "hybrid-analysis" in anonymous
 
 
 def test_overview_shows_most_reported_source_with_link_to_sources_tab(web_client, db):
@@ -175,3 +189,205 @@ def test_sandbox_tab_hands_over_to_daily_run_after_last_fetch(web_client, db):
     page = web_client.get("/detail", query_string={"url": URL, "tab": "sandbox"}).get_data(as_text=True)
 
     assert "No report after the 3 scheduled fetches" in page and "next daily activity scan" in page
+
+
+# --- Sandbox tab: lookup result and manual submission form ---
+
+def sandbox_content(db, content_dir, lookup=None, data=b"#!/bin/sh\necho hi\n"):
+    insert_url(db, URL)
+    sandbox_info = json.dumps({"hybrid_analysis": lookup}) if lookup else None
+    content_id = insert_content(db, data, content_dir=content_dir, sandbox_info=sandbox_info)
+    insert_download(db, URL, content_id)
+    return content_id, db.execute("SELECT sha256 FROM content WHERE id = ?", (content_id,)).fetchone()[0]
+
+
+def sandbox_page(web_client, environ=None):
+    return web_client.get("/detail", query_string={"url": URL, "tab": "sandbox"},
+                          environ_base=environ or {}).get_data(as_text=True)
+
+
+NOT_ANALYSED = {"http_status": 404, "tested": False, "checked_at": "2026-01-01T12:00:00+00:00"}
+
+
+def test_analyst_can_submit_sample_never_analysed(web_client, db, content_dir):
+    content_id, _ = sandbox_content(db, content_dir, NOT_ANALYSED)
+
+    page = sandbox_page(web_client, ANALYST)
+
+    assert "not analysed yet" in page and "SHA-256 not known to Hybrid Analysis (HTTP 404)" in page
+    assert f'action="/sandbox/submit/{content_id}"' in page
+    assert '<option value="330" selected>' in page  # ha_environment_id of the test config
+
+
+def test_anonymous_user_gets_no_submit_form(web_client, db, content_dir):
+    sandbox_content(db, content_dir, NOT_ANALYSED)
+
+    page = sandbox_page(web_client)
+
+    assert "not analysed yet" in page and "/sandbox/submit/" not in page
+
+
+@pytest.mark.parametrize("case", ["not_looked_up", "already_submitted", "file_purged"])
+def test_submit_form_only_when_submission_makes_sense(web_client, db, content_dir, case):
+    content_id, sha256 = sandbox_content(db, content_dir, None if case == "not_looked_up" else NOT_ANALYSED)
+    if case == "already_submitted":
+        insert_sandbox_submission(db, content_id, sha256, submitted_by="bob")
+    if case == "file_purged":
+        db.execute("UPDATE content SET file_path = '/nonexistent/sample'")
+
+    page = sandbox_page(web_client, ANALYST)
+
+    assert "/sandbox/submit/" not in page
+
+
+def test_sandbox_tab_shows_found_report(web_client, db, content_dir):
+    sha256 = hashlib.sha256(b"#!/bin/sh\necho hi\n").hexdigest()
+    lookup = {"http_status": 200, "tested": True, "checked_at": "2026-01-01T12:00:00+00:00",
+              "sample_url": f"https://hybrid-analysis.com/sample/{sha256}",
+              "overview": {"verdict": "malicious", "vx_family": "Linux.Mirai", "threat_score": 100},
+              "reports": [{"job_id": "j1", "environment_id": 330, "environment_description": "Linux (Ubuntu 24.04, 64 bit)",
+                           "state": "SUCCESS", "verdict": "malicious"}]}
+    sandbox_content(db, content_dir, lookup)
+
+    page = sandbox_page(web_client, ANALYST)
+
+    assert "already analysed" in page and f'href="https://hybrid-analysis.com/sample/{sha256}"' in page
+    assert "Linux.Mirai" in page and "Linux (Ubuntu 24.04, 64 bit)" in page
+    assert "/sandbox/submit/" not in page
+
+
+def test_sandbox_tab_shows_failed_recheck_with_previous_answer(web_client, db, content_dir):
+    lookup = dict(NOT_ANALYSED, last_error={"checked_at": "2026-01-02T12:00:00+00:00", "http_status": 429,
+                                            "error": "API rate limit"})
+    sandbox_content(db, content_dir, lookup)
+
+    page = sandbox_page(web_client)
+
+    assert "2026-01-02 12:00:00 UTC &ndash; API rate limit (showing the previous successful result)" in page
+
+
+def test_submitter_name_is_hidden_from_anonymous(web_client, db, content_dir):
+    content_id, sha256 = sandbox_content(db, content_dir, NOT_ANALYSED)
+    insert_sandbox_submission(db, content_id, sha256, submitted_by="alice (Alice Analyst)", status="done",
+                              verdict="malicious", last_fetch_at="2026-01-01T12:10:00+00:00")
+
+    assert "Alice Analyst" not in sandbox_page(web_client)
+    assert "Alice Analyst" in sandbox_page(web_client, ANALYST)
+
+
+def test_sandbox_tab_without_content(web_client, db):
+    insert_url(db, URL)
+
+    assert "nothing to look up in a sandbox" in sandbox_page(web_client)
+
+
+# --- Overview: external links, derived-from, content tab details ---
+
+@pytest.mark.parametrize("reason, link", [
+    ("VT file check", "https://www.virustotal.com/gui/file/da39a3ee"),
+    ("VT URL check", "https://www.virustotal.com/gui/url/aHR0cDovL2V2aWwudGVzdC9hLnNo"),
+])
+def test_reason_links_to_virustotal(web_client, db, reason, link):
+    insert_url(db, URL, classification="malicious", classification_reason=reason, hash="da39a3ee")
+
+    assert f'href="{link}"' in web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+
+def test_blacklist_reason_links_to_urlhaus(web_client, http_mock, config, db):
+    insert_url(db, URL, classification="malicious", classification_reason="Blacklist check")
+    call = http_mock.post(config.urlhaus_detail_url, json={"query_status": "ok",
+                                                           "urlhaus_reference": "https://urlhaus.abuse.ch/url/1/"})
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert 'href="https://urlhaus.abuse.ch/url/1/"' in page and call.call_count == 1
+
+
+def test_urlhaus_lookup_failure_does_not_break_detail(web_client, http_mock, db):
+    insert_url(db, URL, classification="malicious", classification_reason="Blacklist check")
+
+    assert web_client.get("/detail", query_string={"url": URL}).status_code == 200  # no mock -> ConnectionError
+
+
+def test_reported_url_links_to_misp_event(web_client, fake_misp, db):
+    insert_url(db, URL, classification="malicious", reported="yes")
+    fake_misp.search.return_value = [{"Event": {"id": "42"}}]
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert 'href="https://misp.test/events/view/42"' in page
+    assert fake_misp.search.call_args.kwargs["value"] == URL
+
+
+def test_derived_from_links_to_source_url(web_client, db):
+    src = insert_url(db, "http://loader.test/a.sh")
+    insert_url(db, URL)
+    insert_discovered(db, URL, src)
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert 'class="derived-link" href="/detail?url=http://loader.test/a.sh"' in page
+
+
+def test_content_tab_shows_size_type_and_versions(web_client, db, content_dir):
+    insert_url(db, URL, last_seen="2026-01-05")
+    v1 = insert_content(db, b"x" * 45363, content_dir=content_dir, file_category="script", magika_label="shell",
+                        magika_description="Shell script")
+    v2 = insert_content(db, b"y")
+    insert_download(db, URL, v1, fetched_at="2026-01-01T06:00:00+00:00")
+    insert_download(db, URL, v1, fetched_at="2026-01-02T06:00:00+00:00", change_type="confirmed")
+    insert_download(db, URL, v2, fetched_at="2026-01-03T06:00:00+00:00", change_type="content_changed")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert "44.3 KB" in page and "Shell script" in page
+    assert "2026-01-01 06:00:00 UTC &rarr; 2026-01-02 06:00:00 UTC" in page
+    assert page.count("download-link") == 2
+
+
+# --- Template filters ---
+
+@pytest.mark.parametrize("value, text", [
+    (0, "0 B"), (1023, "1023 B"), (45363, "44.3 KB"), (5 * 1024 ** 2, "5.0 MB"), (None, ""), ("abc", ""),
+])
+def test_human_bytes(web_app, value, text):
+    assert web_app.human_bytes(value) == text
+
+
+@pytest.mark.parametrize("value, with_time, text", [
+    ("2026-01-01T12:00:00+00:00", True, "2026-01-01 12:00:00 UTC"),
+    ("2026-01-01T12:00:00.123456Z", True, "2026-01-01 12:00:00 UTC"),
+    ("2026-01-01 12:00:00", False, "2026-01-01"),
+    (None, True, ""),
+])
+def test_fmt_ts(web_app, value, with_time, text):
+    assert web_app.fmt_ts(value, with_time) == text
+
+
+# --- Local development sign in ---
+
+def test_dev_login_is_disabled_by_default(web_client):
+    assert web_client.post("/dev/login", data={"username": "mallory"}).status_code == 404
+    assert web_client.post("/dev/logout").status_code == 404
+
+
+def test_dev_login_signs_in_as_typed_name(web_app, db):
+    web_app.app.config["DEV_LOGIN"] = True
+    client = web_app.app.test_client()
+    insert_url(db, URL)
+
+    assert client.get("/edit_detail", query_string={"url": URL}).status_code == 403
+    client.post("/dev/login", data={"username": "dev-alice"})
+    assert client.get("/edit_detail", query_string={"url": URL}).status_code == 200
+    client.post("/dev/logout")
+    assert client.get("/edit_detail", query_string={"url": URL}).status_code == 403
+
+
+def test_oidc_user_name(web_client, db):
+    insert_url(db, URL)
+    environ = {"OIDC_CLAIM_preferred_username": "alice",
+               "OIDC_CLAIM_name": "Alice Šimková".encode("utf-8").decode("latin1")}
+
+    web_client.get("/detail", query_string={"url": URL}, environ_base=environ)
+
+    assert db.execute("SELECT user FROM user_url_history").fetchone() == ("alice (Alice Šimková)",)

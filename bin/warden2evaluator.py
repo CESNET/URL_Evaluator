@@ -84,11 +84,19 @@ def receiver():
     """
 
     while running_flag:
-        if not (events := wclient.getEvents(**config.warden_filter)):
-            time.sleep(10)
-            continue
-        logger.debug("Received %d events", len(events))
-        handle_events(events)
+        try:
+            events = wclient.getEvents(**config.warden_filter)
+            # warden_client returns (not raises) an Error object when the request fails
+            if isinstance(events, Error):
+                logger.error(f"Error while receiving events from Warden: {events}")
+                events = None
+            if events:
+                logger.debug("Received %d events", len(events))
+                handle_events(events)
+                continue
+        except Exception as e:
+            logger.exception(f"Error while receiving events from Warden: {type(e).__name__}: {e}")
+        time.sleep(10)
 
 
 def handle_events(events):
@@ -103,17 +111,21 @@ def handle_events(events):
             # the ingest collector/pipeline is always the Warden client
             if not (honeynet := get_source_name(event)):
                 continue
-            for attachment in event.get("Attach", []):
-                if "Content" in attachment:
-                    content = attachment["Content"]
-                    if re.match("^\[(\'|\")(\r\n|\r|\n|.)*(\'|\")\]$", content):
-                        content = content[2:-2]  # Unwrap
-                    logger.debug(f"Looking for new URLs in '{content}'")
+            # One failing event must not drop the rest of the batch (Warden does not deliver it again)
+            try:
+                for attachment in event.get("Attach", []):
+                    if "Content" in attachment:
+                        content = attachment["Content"]
+                        if re.match(r"""^\[('|")(\r\n|\r|\n|.)*('|")\]$""", content):
+                            content = content[2:-2]  # Unwrap
+                        logger.debug(f"Looking for new URLs in '{content}'")
 
-                    # Search for new URLs
-                    if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), "Warden", None, honeynet):
-                        logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
-                        inserted.extend(new_urls)
+                        # Search for new URLs
+                        if new_urls := process_new_session(db, config, content, event.get("ID"), event.get("DetectTime"), "Warden", None, honeynet):
+                            logger.info(f"Discovered {len(new_urls)} new URLs (event ID {event.get('ID')}): {new_urls}")
+                            inserted.extend(new_urls)
+            except Exception as e:
+                logger.exception(f"Error while processing event {event.get('ID')}: {type(e).__name__}: {e}")
     return inserted
 
 

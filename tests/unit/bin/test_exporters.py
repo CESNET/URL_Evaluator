@@ -335,15 +335,32 @@ def test_sightings_of_urls_seen_yesterday(evaluator2misp_mod, misp, db):
         "http://miner.test/", "http://yesterday.test/"]
 
 
-def test_misp_connection_error_exits(evaluator2misp_mod, monkeypatch):
+@pytest.mark.parametrize("module", ["evaluator2misp", "evaluator2misp_bysource"])
+def test_misp_connection_error_ends_the_job(init_bin, monkeypatch, caplog, module):
+    # a scheduler job must not call sys.exit(), the next run tries again
+    exporter = init_bin(module)
+
     def unreachable(*args, **kwargs):
         raise ConnectionError("MISP down")
-    monkeypatch.setattr(evaluator2misp_mod, "PyMISP", unreachable)
+    monkeypatch.setattr(exporter, "PyMISP", unreachable)
 
-    with pytest.raises(SystemExit) as exit_info:
-        evaluator2misp_mod.evaluator2misp()
+    getattr(exporter, module)()
 
-    assert exit_info.value.code == 1
+    assert "Error while connecting to MISP" in caplog.text
+
+
+@pytest.mark.parametrize("module", ["evaluator2misp", "evaluator2misp_bysource"])
+def test_failed_sync_ends_the_job(init_bin, fake_misp, monkeypatch, caplog, module):
+    exporter = init_bin(module)
+    monkeypatch.setattr(exporter, "PyMISP", lambda *args, **kwargs: fake_misp)
+
+    def broken(misp, db):
+        raise RuntimeError("MISP returned 500")
+    monkeypatch.setattr(exporter, "sync_urls", broken)
+
+    getattr(exporter, module)()
+
+    assert "Failed to sync data with MISP" in caplog.text
 
 
 # --- evaluator2misp_bysource: one MISP event per honeynet ---
@@ -382,10 +399,6 @@ def test_bysource_sorts_urls_into_events_of_their_source(evaluator2misp_bysource
     assert fake_misp.publish.call_count == 4  # every source event is published
 
 
-@pytest.mark.xfail(strict=True, reason="REGRESSION (PR #5): warden2evaluator now stores url_source='Warden' and the "
-                                       "honeynet node in observations.honeynet, but evaluator2misp_bysource still "
-                                       "groups URLs by url_source ('CESNET Hugo', 'CZ.NIC HaaS'), so new Warden "
-                                       "URLs are never exported to their honeynet event")
 def test_bysource_exports_warden_url_to_its_honeynet_event(
         warden2evaluator_mod, evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
     event = load_json("idea", "cowrie_session.json")  # Node.SW hugo-cowrie -> CESNET Hugo
@@ -395,3 +408,83 @@ def test_bysource_exports_warden_url_to_its_honeynet_event(
     evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
 
     assert event_urls(events_by_source, "CESNET Hugo") == set(urls)
+
+
+def test_bysource_url_content_without_discovered_source_does_not_stop_sync(
+        evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
+    orphan = insert_url(db, "http://orphan.test/x86", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, orphan, "URL content")  # its loader is gone
+    other = insert_url(db, "http://hna.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, other, "HoneyNet.Asia")
+
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
+
+    assert event_urls(events_by_source, "HoneyNet.Asia") == {other}
+    assert fake_misp.publish.call_count == 4
+
+
+def test_bysource_nested_download_goes_to_the_source_of_the_first_url(
+        evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
+    loader = insert_url(db, "http://loader.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    stage2 = insert_url(db, "http://loader.test/b.sh", classification="malicious", last_seen="2099-01-01")
+    payload = insert_url(db, "http://loader.test/x86", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, loader, "GEANT T-Pot")
+    for url, src in ((stage2, loader), (payload, stage2)):
+        insert_source(db, url, "URL content")
+        insert_discovered(db, url, src)
+
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
+
+    assert event_urls(events_by_source, "GEANT T-Pot") == {loader, stage2, payload}
+
+
+@pytest.mark.parametrize("module", ["evaluator2misp", "evaluator2misp_bysource"])
+def test_sync_keeps_objects_it_did_not_create(init_bin, fake_misp, misp_event, db, module):
+    exporter = init_bin(module)
+    fake_misp.search.return_value = [misp_event]
+    fake_misp.get_event.return_value = misp_event
+    fake_misp.update_event.side_effect = lambda event, pythonify: event
+    foreign = MISPObject("file")
+    foreign.add_attribute("filename", "added-by-analyst.sh")
+    misp_event.add_object(foreign)
+    url = insert_url(db, "http://new.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, url, "HoneyNet.Asia")
+
+    exporter.sync_urls(fake_misp, db)
+
+    names = [o.name for o in fake_misp.update_event.call_args.args[0].objects if not getattr(o, "deleted", False)]
+    assert "file" in names and "url-honeypot-detection" in names
+
+
+def test_urlhaus_skips_url_with_unexpected_lookup_answer(urlhaus, http_mock, config, db):
+    urlhaus_candidate(db)
+    http_mock.post(config.urlhaus_detail_url, json={"query_status": "invalid_url"})
+    submit = http_mock.post(config.urlhaus_submit_url, body="ok")
+
+    urlhaus.evaluator2urlhaus()
+
+    assert submit.call_count == 0 and urlhaus_rows(db) == []
+
+
+def test_urlhaus_submission_connection_error_is_recorded(urlhaus, http_mock, config, db):
+    urlhaus_candidate(db)
+    mock_urlhaus_lookup(http_mock, config)  # submit URL not mocked -> ConnectionError
+
+    urlhaus.evaluator2urlhaus()
+
+    status, response = db.execute("SELECT status, response FROM urlhaus_submissions").fetchone()
+    assert status == "error" and "Connection refused" in response
+
+
+@freeze_time("2026-03-01")
+def test_sync_completes_object_without_last_seen_and_source(evaluator2misp_mod, misp, misp_event, db):
+    url = insert_url(db, "http://old.test/a.sh", classification="malicious", status="active", last_seen="2026-02-28")
+    insert_source(db, url, "Warden")
+    obj = MISPObject("url-honeypot-detection")  # created by an older version
+    obj.add_attribute(object_relation="url", simple_value=url, Attribute={"type": "url", "value": url, "to_ids": True})
+    misp_event.add_object(obj)
+
+    evaluator2misp_mod.sync_urls(misp, db)
+
+    attrs = attributes(objects_by_url(misp.update_event.call_args.args[0])[url])
+    assert (str(attrs["last-seen"].value)[:10], attrs["source"].value) == ("2026-02-28", "Warden")

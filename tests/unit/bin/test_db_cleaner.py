@@ -114,6 +114,17 @@ def test_removes_sessions_left_without_urls(db_cleaner_mod, db):
 
 
 @freeze_time(TODAY)
+def test_link_without_session_does_not_block_session_cleanup(db_cleaner_mod, db):
+    alive = insert_url(db, "http://alive.test/", last_seen="2026-02-28", status="active")
+    db.execute("INSERT INTO url_session (url, session) VALUES (?, NULL)", (alive,))
+    insert_session(db, "wget http://flood.test/1")
+
+    db_cleaner_mod.db_cleaner()
+
+    assert sessions(db) == set()
+
+
+@freeze_time(TODAY)
 def test_deleted_url_takes_its_whole_record_graph(db_cleaner_mod, db):
     old = insert_url(db, "http://old.test/", last_seen="2026-01-01", status="inactive")
     alive = insert_url(db, "http://alive.test/x86", last_seen="2026-02-28", status="active")

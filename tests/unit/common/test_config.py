@@ -23,3 +23,12 @@ def test_missing_key_raises_attribute_error(config):
 def test_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         Config(str(tmp_path / "missing.yaml"))
+
+
+@pytest.mark.parametrize("content", ["", "# only a comment\n", "- a list\n"])
+def test_empty_or_invalid_file_raises_clear_error(tmp_path, content):
+    path = tmp_path / "config.yaml"
+    path.write_text(content)
+
+    with pytest.raises(ValueError, match="config.yaml"):
+        Config(str(path))

@@ -42,9 +42,13 @@ def tpot2evaluator():
 
         with SQLiteWrapper(config.db_path) as db:
             for session in response.json():
-                logger.debug(f"Looking for new URLs in '{session['input']}'")
-                if new_urls := process_new_session(db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", None, "GEANT T-Pot"):
-                    logger.info(f"Discovered {len(new_urls)} new URLs: {new_urls}")
+                # One malformed session must not drop the rest of the download
+                try:
+                    logger.debug(f"Looking for new URLs in '{session['input']}'")
+                    if new_urls := process_new_session(db, config, session["input"], None, session["timestamp"], "GEANT T-Pot", None, "GEANT T-Pot"):
+                        logger.info(f"Discovered {len(new_urls)} new URLs: {new_urls}")
+                except Exception as e:
+                    logger.error(f"Error while processing session {session!r:.200}: {type(e).__name__}: {e}")
     except Exception as e:
         logger.error(f"Error while processing sessions: {type(e).__name__}: {e}")
     logger.info("Job finished")
