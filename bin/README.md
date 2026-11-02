@@ -10,14 +10,35 @@
 6. **VirusTotal URL lookup**.
 7. **VirusTotal file-hash lookup** (`analyze_content`), only if the URL is still unclassified.
 8. **Hybrid Analysis** (`_submit_unclassified_content`), only if the URL is still unclassified (not when it was postponed by the VT quota) and Magika classified its content as `executable` or `script`:
-   - The hash already has a report: the verdict decides (`malicious` → `malicious`, `whitelisted` → `harmless`, other verdicts leave it `unclassified`). Reason `Hybrid Analysis check`.
+   - The hash already has a report: only the verdict `malicious` decides (→ `malicious`, reason `Hybrid Analysis check`, threat label from `vx_family`). Every other verdict (`whitelisted`, `suspicious`, `no specific threat`, …) leaves the URL `unclassified` and the content is not submitted. Hybrid Analysis never classifies a URL `harmless`.
    - The hash was never analysed (HTTP 404): the content is submitted (`submit_content`, `submitted_by = 'evaluator'`, environment `ha_environment_id`). The URL stays `unclassified` for now.
 
 ### Scheduled fetches of evaluator's submissions (`fetch_job`)
 
 A `BackgroundScheduler` job (`common/ha_fetch_scheduler.FetchJob(config, by_evaluator=True)`) runs every 60 s (`POLL_SECONDS`) and fetches the reports of evaluator's own submissions 10, 20 and 30 min after the submission, the same way activity_scanner does for the web UI ones. With no report after 30 min, the daily activity_scanner run takes over.
 
-**URL classification by a found report** (`hybrid_analysis.finish_submissions` → `classify_urls`, the same for every submission and every process that finds the report): the verdict classifies every evaluated URL that served this content and is `unclassified` at that moment (history actor `hybrid-analysis`). Its `unclassified` source URLs become malicious too (actor `hybrid-analysis-backprop`). An already classified URL is never changed. A URL not evaluated yet is left to evaluator, which uses the same report (step 8).
+**When a report is found** (`hybrid_analysis.finish_submissions` → `classify_urls`)
+
+This is the continuation of step 8 for a submitted file. Evaluator finishes the URL right after the submission (`evaluated = yes`, `unclassified`) and moves on, because the analysis on Hybrid Analysis takes minutes. The report is found later in one of two ways:
+
+- a scheduled fetch of `fetch_job` (10, 20 or 30 min after the submission) gets it, or
+- evaluator meets the same file again at another URL, and its lookup in step 2 gets the report.
+
+From that moment the URL is classified as follows.
+
+A report belongs to a file (its SHA-256), not to a URL. The same file can be served by several URLs, so the report is applied to all of them. Only a `malicious` verdict does anything; any other verdict changes nothing.
+
+Example: the file served by `http://b.test/x86` gets a `malicious` report.
+
+| URL | Its state when the report is found | Result |
+|---|---|---|
+| `b.test/x86` (served the file) | `unclassified` | → `malicious`, reason `Hybrid Analysis check` (history actor `hybrid-analysis`) |
+| | already classified by another check | unchanged (HA only fills gaps) |
+| | not evaluated yet | unchanged, evaluator uses the same report later (step 8) |
+
+When the report makes `b.test/x86` malicious, the URLs whose content downloads it (e.g. a script with `wget http://b.test/x86`) become malicious too, the same back-propagation as in evaluator (`mark_source_urls_malicious`, history actor `hybrid-analysis-backprop`).
+
+These rules are the same whoever submitted the file (evaluator or the web UI) and whichever process found the report.
 
 Before each URL, the main loop calls `_log_ha_usage_if_ha_stats_interval_minutes_reached()`. Every `ha_stats_interval_minutes` (default 10) it logs Hybrid Analysis usage: hashes checked, request rate and HTTP 429 hits. Then it resets the counters.
 

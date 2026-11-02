@@ -69,7 +69,7 @@ def test_oversized_payload_is_not_stored(evaluator_mod, httpserver, external_api
     assert observations(db, url) == [(200, "unavailable", None)]
     assert fetch_errors(db, url) == ["oversized"]
     assert db.execute("SELECT COUNT(*) FROM content").fetchone()[0] == 0
-    # content_size / 'File too large' are not stored: see the xfail test_too_large_content
+    # the URL itself is classified 'File too large': see test_too_large_content
 
 
 def test_redirect_loop_is_unreachable(evaluator_mod, httpserver, external_apis, db):

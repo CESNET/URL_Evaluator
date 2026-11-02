@@ -23,7 +23,8 @@ fetches it.
 When the report of a submission is found (by any of these fetches or by a
 regular hash lookup), its verdict classifies the URLs serving the sample that
 are unclassified at that moment (``classify_urls``). Hybrid Analysis never
-changes the classification of an already classified URL.
+changes the classification of an already classified URL serving the sample;
+the source URLs of a malicious one become malicious, as in evaluator.
 """
 
 import json
@@ -34,6 +35,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import requests
+
+from common.utils import mark_source_urls_malicious
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +75,11 @@ DEFAULT_FETCH_SCHEDULE_MINUTES = (10, 20, 30)
 EVALUATOR_SUBMITTER = "evaluator"
 # Content categories (file_classifier.CATEGORIES) evaluator submits automatically.
 AUTO_SUBMIT_CATEGORIES = ("executable", "script")
-# Overview verdict -> URL classification. Other verdicts ('suspicious',
-# 'no specific threat', 'no verdict') leave the URL unclassified.
-_VERDICT_CLASSIFICATIONS = {"malicious": "malicious", "whitelisted": "harmless"}
+# Overview verdict -> URL classification. Only a malicious verdict decides:
+# Hybrid Analysis never makes a URL harmless (a 'whitelisted' sample may still
+# be served for malicious purposes), other verdicts ('whitelisted',
+# 'suspicious', 'no specific threat', 'no verdict') leave the URL unclassified.
+_VERDICT_CLASSIFICATIONS = {"malicious": "malicious"}
 CLASSIFICATION_REASON = "Hybrid Analysis check"
 
 # Overview fields worth keeping (the full Overview object is large).
@@ -313,7 +318,8 @@ def classification_from_lookup(lookup):
     """
     URL classification from the Overview verdict of a found report:
     ``{classification, classification_reason[, threat_label]}``, or None when
-    the hash has no report or its verdict does not decide (e.g. 'suspicious').
+    the hash has no report or its verdict does not decide (anything but
+    'malicious', HA never classifies a URL harmless).
     """
     if not lookup or not lookup.get("tested"):
         return None
@@ -332,8 +338,9 @@ def classify_urls(db, sha256, lookup):
     Classify every evaluated URL that served the content `sha256` and is
     unclassified at this moment by the verdict of its report (see
     classification_from_lookup), record it in classification_history and,
-    when malicious, mark its unclassified source URLs malicious too. An
-    already classified URL is never changed. URLs not evaluated yet are left
+    when malicious, mark its source URLs malicious too, like evaluator does
+    (mark_source_urls_malicious). An already classified URL serving the
+    content is never changed. URLs not evaluated yet are left
     to evaluator, which classifies them by the same report.
     Returns the list of reclassified URLs. Never raises.
     """
@@ -357,29 +364,13 @@ def classify_urls(db, sha256, lookup):
                                      actor="hybrid-analysis")
             logger.info(f"URL {url} was classified as {cls['classification']} by the Hybrid Analysis report of {sha256}")
             if cls["classification"] == "malicious":
-                _mark_source_urls_malicious(db, url)
+                if sources := mark_source_urls_malicious(db, url, "hybrid-analysis-backprop"):
+                    logger.info(f"URLs {sources} were classified as malicious because they downloaded "
+                                f"content from a malicious URL ({url})")
         return urls
     except Exception as e:
         logger.warning(f"Could not classify URLs of content {sha256} by its Hybrid Analysis report: {e}")
         return []
-
-
-def _mark_source_urls_malicious(db, url):
-    """
-    Mark the unclassified URLs that `url` was downloaded from malicious
-    (back-propagation like in evaluator, but never over a classification).
-    """
-    sources = [row[0] for row in db.execute(
-        "SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url "
-        "WHERE s.url = ? AND urls.classification = 'unclassified'", (url,)).fetchall()]
-    for src_url in sources:
-        db.execute("UPDATE urls SET classification = 'malicious', classification_reason = "
-                   "'Downloading from malicious URL' WHERE url = ? AND classification = 'unclassified'",
-                   (src_url,))
-        db.record_classification(src_url, "malicious", reason="Downloading from malicious URL",
-                                 actor="hybrid-analysis-backprop")
-    if sources:
-        logger.info(f"URLs {sources} were classified as malicious because they downloaded content from a malicious URL ({url})")
 
 
 def check_content(db, config, content_id, sha256, force=False):
@@ -483,13 +474,14 @@ def submit_file(config, file_path, sha256, environment_id, comment=None):
                          headers=_headers(api_key), data=data,
                          files={"file": (f"{sha256}.bin", f, "application/octet-stream")},
                          timeout=120, allow_redirects=False)  # a redirect would turn the POST into GET
-    except OSError as e:
-        logger.warning(f"Hybrid Analysis submission of {sha256}: cannot read {file_path}: {e}")
-        result["error"] = f"Cannot read stored sample: {type(e).__name__}"
-        return result
+    # RequestException is an OSError subclass, it must be caught first.
     except requests.exceptions.RequestException as e:
         logger.warning(f"Hybrid Analysis submission of {sha256} failed: {e}")
         result["error"] = f"Request failed: {type(e).__name__}"
+        return result
+    except OSError as e:
+        logger.warning(f"Hybrid Analysis submission of {sha256}: cannot read {file_path}: {e}")
+        result["error"] = f"Cannot read stored sample: {type(e).__name__}"
         return result
 
     result["http_status"] = r.status_code

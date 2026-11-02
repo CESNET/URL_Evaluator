@@ -153,6 +153,23 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None, username=None):
     return result
 
 
+def mark_source_urls_malicious(db, url, actor):
+    """
+    Back-propagation: mark the URLs that `url` was downloaded from
+    (discovered_urls.src_url) malicious, whatever their classification is,
+    unless they are malicious already. Used by evaluator and Hybrid Analysis
+    alike. Returns the list of reclassified source URLs.
+    """
+    sources = [row[0] for row in db.execute(
+        "SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url "
+        "WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()]
+    for src_url in sources:
+        db.execute("UPDATE urls SET classification = 'malicious', classification_reason = "
+                   "'Downloading from malicious URL' WHERE url = ?", (src_url,))
+        db.record_classification(src_url, "malicious", reason="Downloading from malicious URL", actor=actor)
+    return sources
+
+
 def process_new_session(db, config, session, idea_id, detect_time, source, source_url, honeynet=None):
     """
     Process a new session:
@@ -194,6 +211,8 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
             # the dependent tables (url_session, url_source,
             # observations, discovered_urls) reference urls.url, so inserting them
             # before the parent row exists raises "FOREIGN KEY constraint failed".
+            # cursor.lastrowid can't tell: on conflict SQLite keeps the rowid of the previous insert
+            known = db.execute("SELECT 1 FROM urls WHERE url = ?", (url,)).fetchone()
             db.execute(
                 """
                 INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)
@@ -201,7 +220,7 @@ def process_new_session(db, config, session, idea_id, detect_time, source, sourc
                     occurrences = occurrences + 1,
                     last_seen = excluded.last_seen;
                 """, (url, date, date, url_domain[url]))
-            if db.cursor.lastrowid:
+            if not known:
                 inserted_urls.append(url)
 
             # Now that the parent row exists, record its dependent relations.

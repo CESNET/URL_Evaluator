@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 from freezegun import freeze_time
 
@@ -225,3 +226,89 @@ def test_fetch_raising_still_uses_its_slot(http_mock, config, db, monkeypatch):
         assert ha_fetch_scheduler.fetch_due_results(db, config) == {"failed": 1}
 
     assert _row(db, submission_id)[2:4] == (1, "2026-01-01T12:20:00+00:00")
+
+
+def test_submission_of_purged_content_is_still_fetched(http_mock, config, db):
+    _, submission_id = _submission(db)
+    db.execute("UPDATE sandbox_submissions SET content_id = NULL")  # db_cleaner purged the sample
+    db.execute("DELETE FROM content")
+    mock_ha_overview(http_mock, config, status=200)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        assert ha_fetch_scheduler.fetch_due_results(db, config) == {"found": 1}
+
+    assert _row(db, submission_id)[:3] == ("done", "malicious", 1)
+
+
+def test_submission_of_purged_content_not_ready(http_mock, config, db):
+    _, submission_id = _submission(db)
+    db.execute("UPDATE sandbox_submissions SET content_id = NULL")
+    mock_ha_overview(http_mock, config, status=404)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        assert ha_fetch_scheduler.fetch_due_results(db, config) == {"not_ready": 1}
+
+    assert _row(db, submission_id) == ("pending", None, 1, "2026-01-01T12:20:00+00:00", "2026-01-01T12:10:05+00:00")
+
+
+def test_no_fetches_without_api_key(http_mock, make_config, db):
+    config = make_config(ha_key="")
+    _submission(db, next_fetch_at="2026-01-01T12:10:00+00:00")
+    _submission(db, sha256="b" * 64, next_fetch_at=None)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        assert not ha_fetch_scheduler.fetch_due_results(db, config)
+        assert not ha_fetch_scheduler.fetch_unfinished_results(db, config)
+
+    assert len(http_mock.calls) == 0
+
+
+def test_finished_or_failed_submissions_are_not_fetched(http_mock, config, db):
+    _submission(db, status="done", next_fetch_at="2026-01-01T12:10:00+00:00")
+    _submission(db, sha256="b" * 64, status="error", next_fetch_at=None)
+    mock_ha_overview(http_mock, config, status=200)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        assert not ha_fetch_scheduler.fetch_due_results(db, config)
+        assert not ha_fetch_scheduler.fetch_unfinished_results(db, config)
+
+    assert len(http_mock.calls) == 0
+
+
+def test_fetch_job_uses_its_own_connection_and_submitter(http_mock, config, db):
+    _, evaluator_submission = _submission(db, submitted_by=hybrid_analysis.EVALUATOR_SUBMITTER)
+    mock_ha_overview(http_mock, config, status=200)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        ha_fetch_scheduler.FetchJob(config, by_evaluator=False).run()
+        assert _row(db, evaluator_submission)[0] == "pending"  # web UI job leaves it to evaluator
+        ha_fetch_scheduler.FetchJob(config, by_evaluator=True).run()
+
+    assert _row(db, evaluator_submission)[0] == "done"
+
+
+def test_report_marks_classified_source_urls_malicious(http_mock, config, db):
+    # the same back-propagation as in evaluator: any source that is not malicious yet
+    src_url = insert_url(db, "http://evil.test/", evaluated="yes", classification="harmless")
+    url = insert_url(db, evaluated="yes")
+    insert_discovered(db, url, src_url)
+    content_id, _ = _submission(db, submitted_by=hybrid_analysis.EVALUATOR_SUBMITTER)
+    insert_download(db, url, content_id)
+    mock_ha_overview(http_mock, config, status=200)
+
+    with freeze_time("2026-01-01 12:10:05"):
+        ha_fetch_scheduler.fetch_due_results(db, config)
+
+    assert db.execute("SELECT classification, classification_reason FROM urls WHERE url = ?", (src_url,)).fetchone() == (
+        "malicious", "Downloading from malicious URL")
+    assert db.execute("SELECT url, actor FROM classification_history ORDER BY id").fetchall() == [
+        (url, "hybrid-analysis"), (src_url, "hybrid-analysis-backprop")]
+
+
+def test_fetch_job_schedule_polls_every_60_s(config):
+    job = ha_fetch_scheduler.FetchJob(config, by_evaluator=True)
+    scheduler = MagicMock()
+
+    job.schedule(scheduler)
+
+    scheduler.add_job.assert_called_once_with(job.run, "interval", seconds=60)

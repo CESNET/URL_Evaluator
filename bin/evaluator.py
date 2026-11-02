@@ -15,12 +15,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from collections import Counter
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 # Add to path the "one directory above the current file location" to find modules from "common"
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, extract_commands, process_new_session
+from common.utils import is_valid, extract_commands, process_new_session, mark_source_urls_malicious
 try:
     from common import content_store
 except Exception:
@@ -274,8 +275,12 @@ def _submit_unclassified_content(url, body):
         return None
 
     # The lookup made when the content was stored may already have the report.
-    if cls := hybrid_analysis.classification_from_lookup(hybrid_analysis.get_lookup(sandbox_info)):
+    lookup = hybrid_analysis.get_lookup(sandbox_info)
+    if cls := hybrid_analysis.classification_from_lookup(lookup):
         return cls
+    if lookup and lookup.get("tested"):
+        # A report exists but its verdict does not decide (e.g. 'suspicious'), nothing to submit.
+        return None
     environment_id = getattr(config, "ha_environment_id", None) or hybrid_analysis.DEFAULT_ENVIRONMENT_ID
     result, outcome = hybrid_analysis.submit_content(db, config, content_id, file_path, sha256,
                                                      hybrid_analysis.EVALUATOR_SUBMITTER, environment_id)
@@ -356,6 +361,21 @@ def _store_downloaded_content(url, body, mime_type, fetched_at):
         return None, "storage_failed"
 
 
+class Content(NamedTuple):
+    """
+    Content of a URL downloaded by _fetch_and_store_content(). sha1 and body
+    are None when no usable body was downloaded (HTTP error, empty body,
+    larger than max_file_size).
+    """
+    sha1: str | None
+    body: bytes | None
+    size: str | None  # Content-Length header, set also when the body is too large
+    mime: str | None  # Content-Type header, or detected by libmagic
+
+
+NO_CONTENT = Content(None, None, None, None)
+
+
 def _fetch_and_store_content(url):
     """Download `url` once, store the payload and log the fetch.
 
@@ -368,8 +388,7 @@ def _fetch_and_store_content(url):
       - when the body is a shell script, extracts nested URLs from it
         (search_for_nested_urls) and links them as derived-from `url`
 
-    Returns (sha1, body, content_size, file_type); sha1/body are None when no
-    storable body was returned. Raises only on network-level errors.
+    Returns a Content. Raises only on network-level errors.
     """
     fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
@@ -382,11 +401,14 @@ def _fetch_and_store_content(url):
     with response:
         if not response.ok:
             _record_fetch(url, response, content_id=None, fetched_at=fetched_at, fetch_error="http_error")
-            return None, None, None, None
+            return NO_CONTENT
         content_size = response.headers.get('Content-Length')
+        if content_size is not None and not content_size.isdigit():
+            logger.debug(f"Ignoring invalid Content-Length {content_size!r} of {url}")
+            content_size = None
         if content_size is not None and int(content_size) / (1024 ** 2) > config.max_file_size:
             _record_fetch(url, response, content_id=None, fetched_at=fetched_at, fetch_error="oversized")
-            return None, None, content_size, None
+            return Content(None, None, content_size, None)
 
         # Determine file type
         file_type = ""
@@ -399,6 +421,9 @@ def _fetch_and_store_content(url):
                 logger.debug(f"Couldn't determine file type: {e}")
 
         body = response.content
+        if not body:
+            _record_fetch(url, response, content_id=None, fetched_at=fetched_at, fetch_error="empty_body")
+            return Content(None, None, content_size, file_type)
 
         # Search the downloaded content for new URLs
         if file_type in ["application/x-sh", "application/x-shellscript", "text/plain", "text/x-shellscript", "text/x-sh"]:
@@ -408,8 +433,7 @@ def _fetch_and_store_content(url):
         content_id, fetch_error = _store_downloaded_content(url, body, file_type, fetched_at)
         _record_fetch(url, response, content_id=content_id, fetched_at=fetched_at, fetch_error=fetch_error)
 
-        sha1 = hashlib.sha1(body).hexdigest()
-        return sha1, body, content_size, file_type
+        return Content(hashlib.sha1(body).hexdigest(), body, content_size, file_type)
 
 
 def mb_file_check(sha1):
@@ -424,58 +448,37 @@ def mb_file_check(sha1):
     return None
 
 
-def analyze_content(url, prefetched=None):
+def analyze_content(content):
     """
-    Classify the downloaded content of `url` by its SHA-1 hash.
-
-    `prefetched` is an optional (sha1, body, content_size, file_type) tuple
-    from _fetch_and_store_content(); when omitted (or None) this function
-    fetches the content itself (storing it + logging the fetch as a side
-    effect), so its behaviour is unchanged for direct callers.
+    Classify the downloaded `content` (a Content from _fetch_and_store_content)
+    by its SHA-1 hash on VirusTotal (MalwareBazaar is checked before by
+    evaluate_url).
     """
     try:
-        if prefetched is not None:
-            sha1, body, content_size, file_type = prefetched
-            # A caller that pre-fetched may already have a classification; a
-            # None sha1 just means "no usable body" -> unclassified below.
-            if sha1 is None:
-                return dict()
-        else:
-            sha1, body, content_size, file_type = _fetch_and_store_content(url)
-            if sha1 is None:
-                return dict(classification="unclassified", classification_reason="No content")
+        if content.sha1 is None:
+            # No usable body: over max_file_size (only then the size is known) or none at all.
+            if content.size is not None:
+                return dict(classification="unclassified", classification_reason="File too large",
+                            content_size=content.size)
+            return dict(classification="unclassified", classification_reason="No content")
 
-        result = dict(hash=sha1)
-        if content_size is not None:
-            result.update(content_size=content_size)
-        if file_type:
-            result.update(file_mime_type=file_type)
+        result = dict(hash=content.sha1)
+        if content.size is not None:
+            result.update(content_size=content.size)
+        if content.mime:
+            result.update(file_mime_type=content.mime)
 
-        # check content hash on MalwareBazaar
-        mb = mb_file_check(sha1)
-        if mb:
-            result.update(**mb)
-            return result
-
-        # if not found, check content hash on VirusTotal
-        result.update(**vt_request("file", sha1))
+        result.update(**vt_request("file", content.sha1))
         return result
 
-    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
-        return dict(classification="unreachable", classification_reason="Connection timeout")
-    except requests.exceptions.TooManyRedirects:
-        return dict(classification="unreachable", classification_reason="Too many redirects")
-    except requests.exceptions.ConnectionError:
-        return dict(classification="unreachable", classification_reason="Connection refused")
     except Exception as e:
-        # this is usually caused by requests.get() trying to parse invalid URLs
         logger.warning(f"Failed to analyze URL content: {type(e)}: {e}")
         return dict(classification="unclassified", classification_reason="Internal error")
 
 
 def is_blacklisted(url):
     """
-    Check if the URL is blacklisted
+    Check if the URL is blacklisted in URLhaus.
     """
 
     global blacklist
@@ -502,7 +505,9 @@ def check_domain_threshold(url):
     If a threshold is exceeded all non-malicious URLs from the domain will be deleted (probably a DDoS attack)
     """
 
-    domain = db.execute("SELECT domain FROM urls WHERE url=?", (url,)).fetchone()[0]
+    if not (row := db.execute("SELECT domain FROM urls WHERE url=?", (url,)).fetchone()):
+        return False
+    domain = row[0]
     # Only non-malicious URLs are flood candidates; parameterised (no string
     # interpolation) and cascaded via ON DELETE CASCADE to dependent tables.
     urls_to_delete = [
@@ -536,20 +541,23 @@ def check_domain_threshold(url):
                 logger.warning(f"Orphan content cleanup failed (domain flood): {e}")
         logger.info(f"Deleted {len(urls_to_delete)} URLs from domain {domain} (global threshold exceeded)")
         logger.debug(f"Deleted URLs: {tuple(urls_to_delete)}")
-        return True
+        # A malicious URL is kept and still has to be evaluated (else next_url() returns it forever).
+        return url in urls_to_delete
+    return False
 
 
 def evaluate_url(url):
     """
-    For every newly processed (valid) URL the content is always downloaded and
-    stored (deduplicated, plus a download_observation row) via
-    _fetch_and_store_content. Classification then proceeds:
-    1. Check that the URL is valid
-    2. Check the global same-domain threshold (delete flood URLs)
-    3. Check if the URL is listed on URLhaus blacklist
-    4. Check file hash on MalwareBazaar (skipped on pre-fetched network errors)
-    5. Check for entries on VirusTotal (URL, then file hash)
-    6. Still unclassified executable / script content: Hybrid Analysis report,
+    Evaluation pipeline (bin/README.md):
+    1. Validity check (is_valid)
+    2. Download and store the content, always (_fetch_and_store_content:
+       Magika classification + Hybrid Analysis SHA-256 lookup of new content)
+    3. Global same-domain threshold (check_domain_threshold, deletes flood URLs)
+    4. URLhaus blacklist
+    5. MalwareBazaar lookup of the content's SHA-1
+    6. VirusTotal URL lookup
+    7. VirusTotal file-hash lookup (analyze_content)
+    8. Still unclassified executable / script content: Hybrid Analysis report,
        or submission of the content (_submit_unclassified_content)
     Returns a result dict, None when the URL was deleted by the domain
     threshold, or evaluated=no/eval_later=yes when VT rate limit was hit.
@@ -567,15 +575,15 @@ def evaluate_url(url):
     # the URL is already decided by the blacklist / VT below), so the Content
     # tab has a sample + fetch history. Network-level errors only mark it
     # unreachable; they must not prevent the fast classification paths.
-    prefetched = None
-    prefetch_neterr = False
+    content = None  # stays None only on a network error
     try:
-        prefetched = _fetch_and_store_content(url)
-    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout,
-            requests.exceptions.TooManyRedirects, requests.exceptions.ConnectionError):
-        prefetch_neterr = True
-    except Exception:
-        prefetch_neterr = True
+        content = _fetch_and_store_content(url)
+    except requests.exceptions.RequestException:
+        pass
+    except Exception as e:
+        # Not a network error: the URL may be reachable, evaluate it without content.
+        logger.warning(f"Failed to download content of {url}: {type(e).__name__}: {e}")
+        content = NO_CONTENT
 
     logger.debug("Checking domain threshold")
     if check_domain_threshold(url):
@@ -590,35 +598,43 @@ def evaluate_url(url):
 
     # MalwareBazaar file-hash check (more specific than the VT URL check);
     # skipped when no usable body was downloaded.
-    if prefetched and prefetched[0]:
-        mb = mb_file_check(prefetched[0])
+    if content and content.sha1:
+        mb = mb_file_check(content.sha1)
         if mb:
             result.update(**mb)
             return result
 
     logger.debug("Checking VirusTotal")
     result.update(**vt_request("URL", urlsafe_b64encode(url.encode()).decode().strip("=")))
+    if result.get("classification_reason") == "VT limit exceeded":
+        logger.debug(f"URL {url} will be re-evaluated after VirusTotal rate limit is reset")
+        result.update(evaluated="no", eval_later="yes")
+        return result
     if result.get("classification") != "unclassified":
         return result
 
-    # Prefetch network error (unreachable) and still unclassified -> report it.
-    if prefetch_neterr:
+    # Download failed on a network error (unreachable) and still unclassified -> report it.
+    if content is None:
         result.update(classification="unreachable", classification_reason="Connection error")
         return result
 
     logger.debug("Checking content hash")
-    cls = analyze_content(url, prefetched)
+    cls = analyze_content(content)
     if cls.get("classification_reason") == "VT limit exceeded":
         logger.debug(f"URL {url} will be re-evaluated after VirusTotal rate limit is reset")
         result.update(evaluated="no", eval_later="yes")
     else:
-        if cls.get("classification_reason") == "No entry":
+        # Nothing found for the content: keep the VT URL result ('No entry' or
+        # 'inconclusive'); 'No content' / 'File too large' only replace 'No entry'.
+        if cls.get("classification_reason") == "No entry" or (
+                cls.get("classification_reason") in ("No content", "File too large")
+                and result.get("classification_reason") != "No entry"):
             cls.update(**result)
         result.update(**cls)
 
     # Still unclassified: an executable or script content goes to Hybrid Analysis.
-    if result.get("evaluated") == "yes" and result.get("classification") == "unclassified" and prefetched:
-        if ha := _submit_unclassified_content(url, prefetched[1]):
+    if result.get("evaluated") == "yes" and result.get("classification") == "unclassified":
+        if ha := _submit_unclassified_content(url, content.body):
             result.update(**ha)
     return result
 
@@ -664,16 +680,7 @@ def process_url(url):
 
     # If the URL was classified as malicious, mark all source URLs that led to it as malicious
     if result["classification"] == "malicious":
-        rows = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-        if src_urls := ", ".join(f"'{row[0]}'" for row in rows):
-            db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
-            for row in rows:
-                db.record_classification(
-                    row[0],
-                    "malicious",
-                    reason="Downloading from malicious URL",
-                    actor="evaluator-backprop"
-                )
+        if src_urls := mark_source_urls_malicious(db, url, "evaluator-backprop"):
             logger.info(f"URLs {src_urls} were classified as malicious because they downloaded content from a malicious URL ({url})")
     return result
 
