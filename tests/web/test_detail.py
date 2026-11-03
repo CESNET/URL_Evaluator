@@ -491,3 +491,14 @@ def test_reevaluate_keeps_the_tab(web_client, db):
                                environ_base=ANALYST)
 
     assert "tab=sources" in response.headers["Location"] and "show=malicious" in response.headers["Location"]
+
+
+def test_content_tab_has_copy_button_for_sha256(web_client, db):
+    insert_url(db, URL)
+    content_id = insert_content(db)
+    insert_download(db, URL, content_id)
+    sha256 = db.execute("SELECT sha256 FROM content WHERE id = ?", (content_id,)).fetchone()[0]
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert f'class="copy-btn" data-copy="{sha256}" onclick="copyToClipboard(this)"' in page
