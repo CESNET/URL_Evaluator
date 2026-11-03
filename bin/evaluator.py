@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from collections import Counter
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 # Add to path the "one directory above the current file location" to find modules from "common"
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
@@ -376,10 +376,10 @@ class Content(NamedTuple):
     are None when no usable body was downloaded (HTTP error, empty body,
     larger than max_file_size).
     """
-    sha1: str | None
-    body: bytes | None
-    size: str | None  # Content-Length header, set also when the body is too large
-    mime: str | None  # Content-Type header, or detected by libmagic
+    sha1: Optional[str]
+    body: Optional[bytes]
+    size: Optional[str]  # Content-Length header, set also when the body is too large
+    mime: Optional[str]  # Content-Type header, or detected by libmagic
 
 
 NO_CONTENT = Content(None, None, None, None)
