@@ -34,7 +34,7 @@
             {% if url.eval_later == 'yes' %} <p class="to-be-evaluated">URL will be re-evaluated after VirusTotal API limit is reset</p>{% endif %}
             {% if not is_anon %}
             <button title="Edit" class="edit_btn"
-                onclick="location.href='{{ url_for('edit_detail', url=url.url) }}';"></button>
+                onclick="location.href='{{ url_for('edit_detail', url=url.url, show=show, back='detail') }}';"></button>
             {% endif %}
         </div>
 
@@ -44,13 +44,13 @@
                href="{{ url_for('detail', url=url.url, show=show, tab='overview') }}">Overview</a>
             <a class="detail-tab {% if tab == 'content' %}active{% endif %}"
                href="{{ url_for('detail', url=url.url, show=show, tab='content') }}">Content
-                {% if tab_counts.content %}<span class="tab-badge">{{ tab_counts.content }}</span>{% endif %}</a>
+                {% if tab_counts.content %}<span class="tab-badge" title="Versions, incl. fetches without content">{{ tab_counts.content }}</span>{% endif %}</a>
             <a class="detail-tab {% if tab == 'sources' %}active{% endif %}"
                href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">Sources
                 {% if tab_counts.sources %}<span class="tab-badge">{{ tab_counts.sources }}</span>{% endif %}</a>
             <a class="detail-tab {% if tab == 'sandbox' %}active{% endif %}"
                href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">Sandbox
-                {% if tab_counts.sandbox %}<span class="tab-badge">{{ tab_counts.sandbox }}</span>{% endif %}</a>
+                {% if tab_counts.sandbox %}<span class="tab-badge" title="Versions already analysed on Hybrid Analysis">{{ tab_counts.sandbox }}</span>{% endif %}</a>
             <a class="detail-tab {% if tab == 'class_history' %}active{% endif %}"
                href="{{ url_for('detail', url=url.url, show=show, tab='class_history') }}">Class. History
                 {% if tab_counts.class_history %}<span class="tab-badge">{{ tab_counts.class_history }}</span>{% endif %}</a>
@@ -74,7 +74,7 @@
                         <div class="reason-link">
                             <p>{{ url.reason }}</p>
                             {% if links["reason-link"] %}
-                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                                <a class="link" href="{{ links["reason-link"] }}" target="_blank" rel="noopener noreferrer" title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
                             {% endif %}
                         </div>
                     </td>
@@ -109,8 +109,7 @@
                 </tr>
                 <tr>
                     <td>Most reported source</td>
-                    <td>{{ top_source }}
-                        , see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">sources tab</a></td>
+                    <td>{% if top_source %}{{ top_source }}, see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='sources') }}">sources tab</a>{% else %}<span class="derived-none">&mdash;</span>{% endif %}</td>
                 </tr>
                 <tr>
                     <td>Derived from</td>
@@ -132,7 +131,7 @@
                     <td>
                         <div class="reason-link">
                             <p>{{ url.hash }}</p>
-                            <a class="link" href="{{ links["joe-sandbox"] }}" target=”_blank” title="Joe sandbox analysis"><img src="{{ url_for("static", filename="img/joe_sendbox.gif") }}" alt="link"></a>
+                            <a class="link" href="{{ links["joe-sandbox"] }}" target="_blank" rel="noopener noreferrer" title="Joe sandbox analysis"><img src="{{ url_for("static", filename="img/joe_sendbox.gif") }}" alt="link"></a>
                         </div>
                     </td>
                 </tr>
@@ -141,9 +140,9 @@
                 <tr>
                     <td>VirusTotal statistics</td>
                     <td> <div class="reason-link">
-                        <p>{{ url.vt_stats }}</p>
-                            {% if link %}
-                                <a class="link" href="{{ links["reason-link"] }}" target=”_blank” title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                        <p title="{{ url.vt_stats }}">{{ url.vt_stats|vt_stats }}</p>
+                            {% if links["reason-link"] %}
+                                <a class="link" href="{{ links["reason-link"] }}" target="_blank" rel="noopener noreferrer" title="External analysis"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
                             {% endif %}
                         </div></td>
                 </tr>
@@ -154,21 +153,21 @@
                         <div class="reason-link">
                             <p>{{ url.reported }}</p>
                             {% if links["misp"] %}
-                                <a class="link" href="{{ links["misp"] }}" target=”_blank” title="MISP event"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
+                                <a class="link" href="{{ links["misp"] }}" target="_blank" rel="noopener noreferrer" title="MISP event"><img src="{{ url_for("static", filename="img/link.png") }}" alt="link"></a>
                             {% endif %}
                         </div>
                     </td>
                 </tr>
-                {% if url.file_mime_type %}
+                {% if url.mime %}
                 <tr>
                     <td>File mime type</td>
-                    <td>{{ url.file_mime_type }}</td>
+                    <td>{{ url.mime }}</td>
                 </tr>
                 {% endif %}
-                {% if url.content_size %}
+                {% if latest_content_size is not none %}
                 <tr>
                     <td>Content size</td>
-                    <td>{{ url.content_size }} bytes, see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='content') }}" title="Content">content tab</a></td>
+                    <td>{{ latest_content_size|human_bytes }}, see details in <a href="{{ url_for('detail', url=url.url, show=show, tab='content') }}" title="Content">content tab</a></td>
                 </tr>
                 {%else %}
                 <tr>
@@ -237,7 +236,7 @@
                 {% for session in sessions %}
                     <div class="session-wrap">
                         {% if session[1] %}
-                            <a target=”_blank” href="https://mentat-hub.cesnet.cz/mentat/events/{{session[1]}}/show" title="Event detail"><img class="mentat" src="{{ url_for("static", filename="img/mentat.png") }}"> </a>
+                            <a target="_blank" rel="noopener noreferrer" href="https://mentat-hub.cesnet.cz/mentat/events/{{session[1]}}/show" title="Event detail"><img class="mentat" src="{{ url_for("static", filename="img/mentat.png") }}"> </a>
                         {% endif %}
                         <pre class="session">{{ session[0] }}</pre>
                     </div>
@@ -650,11 +649,7 @@
                             {# For old db data, which not store time of evaluation by system
                                 display only date instead zero time placeholder #}
                             {% set ch_ts = entry[4] or '' %}
-                            {% if ch_ts.endswith('00:00:00') %}
-                                <span class="ch-time">{{ ch_ts[:10] }}</span>
-                            {% else %}
-                                <span class="ch-time">{{ ch_ts }} UTC</span>
-                            {% endif %}
+                            <span class="ch-time">{{ ch_ts|fmt_ts(with_time=not ch_ts.endswith('00:00:00')) }}</span>
                             <span class="ch-class"><span class="ch-dot"></span>{{ entry[0] }}</span>
                             {% if entry[1] %}<span class="ch-reason">{{ entry[1] }}</span>{% endif %}
                             <span class="ch-actor">{{ entry[3] }}</span>

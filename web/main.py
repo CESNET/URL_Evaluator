@@ -119,6 +119,22 @@ def fmt_ts(value, with_time=True):
     return (s + " UTC") if with_time else s.split(" ")[0]
 
 
+@app.template_filter('vt_stats')
+def vt_stats(value):
+    """
+    Render the VirusTotal last_analysis_stats JSON as e.g.
+    '37 malicious · 23 undetected · 16 type-unsupported'; the raw value when it is not JSON.
+    """
+    try:
+        stats = json.loads(value)
+        counts = sorted(((k, int(v)) for k, v in stats.items() if int(v)), key=lambda kv: -kv[1])
+    except (TypeError, ValueError, AttributeError):
+        return value
+    # malicious first, it is what the analyst looks for
+    counts.sort(key=lambda kv: kv[0] != "malicious")
+    return " · ".join(f"{n} {k}" for k, n in counts) or "no results"
+
+
 def get_urlhaus_link(url):
     try:
         response = requests.post(config.urlhaus_detail_url, {'url': url})
@@ -385,6 +401,9 @@ def list_all():
     # user has their own)
     filter_params = dict(flask.session.get("filter_params", {}))
     page = flask.session.get("page", 1)
+    # The sort order survives filtering and clearing the filters
+    order = flask.request.args.get("order", filter_params.get("order", "desc"))
+    order_key = flask.request.args.get("key", filter_params.get("order_key", "last_seen"))
 
     # clear filters
     clear = flask.request.args.get('clear_filters')
@@ -441,6 +460,10 @@ def list_all():
 
             filter_params["content_type"] = flask.request.form.get('content_type', '').strip()
 
+            # The panel has no "evaluated" field: drop the one a show tab set,
+            # so it does not stay applied unseen
+            filter_params.pop("evaluated", None)
+
         except BadRequestKeyError:
             pass
 
@@ -483,19 +506,19 @@ def list_all():
         filter_params["evaluated"] = "yes"
 
     # set order of the list
-    order = flask.request.args.get("order", "desc")
-    order_key = flask.request.args.get("key", "last_seen")
-
     filter_params["order"] = order
     filter_params["order_key"] = order_key
     filters, params = parse_filters(filter_params)
-    flask.session["filter_params"] = filter_params
-    flask.session["page"] = page
 
     # Which filter keys (excluding sorting) count as "a filter is applied" for
     # the URL count summary shown in the GUI.
     filter_keys = ("q", "url", "sha256", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type")
     filters_active = any(filter_params.get(k) for k in filter_keys)
+    # "Cancel filtering" keeps the show tab, so offer it only when something
+    # beyond the tab's own filter is applied
+    show_keys = {"not_evaluated": ("evaluated",), "malicious": ("classification",),
+                 "unclassified": ("classification", "evaluated")}.get(show, ())
+    can_cancel = any(filter_params.get(k) for k in filter_keys if k not in show_keys)
     # Filters as the user sees them (quick search + filter panel fields) for the
     # "x/y filters applied" info; the show tabs count as the classification
     # filter.
@@ -504,6 +527,13 @@ def list_all():
     active_filter_count = sum(1 for group in filter_groups if any(filter_params.get(k) for k in group))
 
     with SQLiteWrapper(config.db_path) as db:
+        # get number of pages and URL counts (record_count respects the active
+        # filters, total_count is the size of the whole URL table)
+        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters, params).fetchall()[0][0]
+        total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
+        page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
+        page = min(page, page_count)
+
         # get url details
         url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + " LIMIT ? OFFSET ?",
                               (*params, rows_per_page, rows_per_page * (page - 1))).fetchall()
@@ -511,13 +541,14 @@ def list_all():
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()
 
-        # get number of pages and URL counts (record_count respects the active
-        # filters, total_count is the size of the whole URL table)
-        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters, params).fetchall()[0][0]
-        total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
-        page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
+    flask.session["filter_params"] = filter_params
+    flask.session["page"] = page
 
-    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, active_filter_count=active_filter_count, filter_count=len(filter_groups), content_type_categories=CONTENT_TYPE_CATEGORIES)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, can_cancel=can_cancel, active_filter_count=active_filter_count, filter_count=len(filter_groups), content_type_categories=CONTENT_TYPE_CATEGORIES)
+
+
+# Tabs of the URL detail page
+DETAIL_TABS = ("overview", "content", "sources", "sandbox", "class_history")
 
 
 class URLDetail:
@@ -552,6 +583,8 @@ def detail():
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
     tab = flask.request.args.get('tab', 'overview')
+    if tab not in DETAIL_TABS:
+        tab = 'overview'
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
@@ -560,7 +593,7 @@ def detail():
                 logger.warning(f"Blocked re-evaluate attempt on {url} by anonymous user")
                 return make_response(jsonify({'error': 'Forbidden'}), 403)
             db.execute("UPDATE urls SET evaluated = 'no' WHERE url = ?", (url,))
-            return redirect(url_for('detail', url=url))
+            return redirect(url_for('detail', url=url, show=show, tab=tab))
 
         # get url details
         row = db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
@@ -685,7 +718,10 @@ def detail():
         # date range banner shown at the top of the Content tab.
         current_classification = url_detail.classification
         content_range_start = content_versions[0]["first_fetched"][:10] if content_versions else None
-        content_range_end = (url_detail.last_seen or "")[:10] if content_versions else None
+        content_range_end = content_versions[-1]["last_fetched"][:10] if content_versions else None
+        # Overview "Content size": the newest stored content, as in the Content tab
+        latest_content_size = next((v["file_size"] for v in reversed(content_versions)
+                                    if v.get("content_id") and v.get("file_size") is not None), None)
 
         # Badge counts for the tab bar (0 => the template hides the badge)
         tab_counts = {
@@ -709,11 +745,12 @@ def detail():
 
     # get link for external sources
     reason_link = None
-    if url_detail.reason == "Blacklist check":
+    reason = url_detail.reason or ""
+    if reason == "Blacklist check":
         reason_link = get_urlhaus_link(url)
-    elif "VT file check" in url_detail.reason:
+    elif "VT file check" in reason:
         reason_link = f"https://www.virustotal.com/gui/file/{url_detail.hash}"
-    elif "VT URL check" in url_detail.reason:
+    elif "VT URL check" in reason:
         encoded_url = base64.urlsafe_b64encode(url_detail.url.encode()).decode().rstrip("=")
         reason_link = f"https://www.virustotal.com/gui/url/{encoded_url}"
 
@@ -736,6 +773,7 @@ def detail():
         content_versions=content_versions,
         content_range_start=content_range_start,
         content_range_end=content_range_end,
+        latest_content_size=latest_content_size,
         current_classification=current_classification,
         sandbox_entries=sandbox_entries,
         ha_lookup_by_content=ha_lookup_by_content,
@@ -773,6 +811,9 @@ def edit_detail():
             db.record_classification(url, classification, reason=reason, note=note, actor=user)
             if classification == "malicious":
                 mark_source_urls_malicious(db, url, f"{user}-backprop")
+            # Back where the edit was opened from (the detail page or the list)
+            if flask.request.args.get('back') == 'detail':
+                return redirect(url_for('detail', url=url, show=show))
             return redirect(url_for("list_all", show=show))
 
     return render_template('edit_detail.html', user=user, url=url_list[0], show=show)

@@ -270,3 +270,74 @@ def test_invalid_page_shows_the_first_page(web_client, db, page_arg):
     response = web_client.get("/", query_string={"page": page_arg})
 
     assert response.status_code == 200 and listed(response.get_data(as_text=True), "http://a.test/")
+
+
+def test_page_beyond_the_last_shows_the_last_page(web_client, db):
+    urls = [insert_url(db, f"http://evil.test/{i:02d}") for i in range(30)]
+
+    page = web_client.get("/?page=9999").get_data(as_text=True)
+
+    assert "<p>2 of 2</p>" in page and len(listed(page, *urls)) == 5
+
+
+def test_sorting_survives_filtering(web_client, db):
+    insert_url(db, "http://a.test/", classification="malicious", last_seen="2026-01-01")
+    insert_url(db, "http://b.test/", classification="malicious", last_seen="2026-01-03")
+
+    web_client.get("/?key=url&order=asc")
+    page = web_client.post("/?page=1", data=filter_form(classification="malicious")).get_data(as_text=True)
+
+    assert page.index('title="http://a.test/"') < page.index('title="http://b.test/"')
+
+
+def test_status_filter_offers_unknown(web_client, db):
+    insert_url(db, "http://a.test/", status="unknown")
+    insert_url(db, "http://b.test/", status="active")
+
+    page = web_client.post("/", data=filter_form(status="unknown")).get_data(as_text=True)
+
+    status_select = page[page.index('id="filter-status"'):]
+    assert 'value="unknown">Unknown</option>' in status_select[:status_select.index("</select>")]
+    assert listed(page, "http://a.test/", "http://b.test/") == {"http://a.test/"}
+
+
+def test_filter_panel_drops_the_hidden_evaluated_filter_of_a_show_tab(web_client, db):
+    insert_url(db, "http://a.test/", classification="malicious", evaluated="no")
+
+    web_client.get("/?show=unclassified")
+    page = web_client.post("/", data=filter_form(classification="malicious")).get_data(as_text=True)
+
+    assert listed(page, "http://a.test/") == {"http://a.test/"}
+
+
+def test_clearing_quick_search_keeps_panel_filters(web_client, db):
+    insert_url(db, "http://a.test/", classification="malicious")
+    insert_url(db, "http://b.test/", classification="harmless")
+
+    web_client.post("/", data=filter_form(classification="malicious"))
+    web_client.get("/?q=test")
+    page = web_client.get("/?page=1&q=").get_data(as_text=True)
+
+    searched = web_client.get("/?q=test").get_data(as_text=True)
+
+    assert listed(page, "http://a.test/", "http://b.test/") == {"http://a.test/"}
+    assert "/?page=1&amp;q=" in searched and "clear_filters" not in searched[searched.index("quick-search-clear"):][:300]
+
+
+def test_cancel_filtering_hidden_when_only_the_show_tab_filters(web_client, db):
+    insert_url(db, "http://a.test/", classification="malicious")
+
+    tab_only = web_client.get("/?show=malicious&clear_filters=True").get_data(as_text=True)
+    with_search = web_client.get("/?show=malicious&q=a.test").get_data(as_text=True)
+
+    assert "Cancel filtering" not in tab_only and "Cancel filtering" in with_search
+
+
+def test_anonymous_user_gets_no_url_checkboxes(web_client, db):
+    insert_url(db, "http://a.test/")
+
+    anonymous = web_client.get("/").get_data(as_text=True)
+    analyst = web_client.get("/", environ_base=ANALYST).get_data(as_text=True)
+
+    assert 'name="selected_urls[]"' not in anonymous and "Select All" not in anonymous
+    assert 'name="selected_urls[]"' in analyst

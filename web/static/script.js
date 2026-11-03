@@ -55,16 +55,29 @@
       }
     }
 
-    const currentUrl = window.location.pathname;
-    var resultUrl = currentUrl + "detail?url=" + encodeURIComponent(element.value);
+    wrap.appendChild(selectedURLElement(element.value));
+  }
+
+  // One entry of the "Selected URLs" list. Built with the DOM API, never
+  // innerHTML: the URLs come from honeypots, i.e. from attackers.
+  function selectedURLElement(url) {
     const div = document.createElement('div');
     div.className = 'selected-url';
-    div.innerHTML = `
-      <input type="hidden" name="selected_urls_list[]" value="${element.value}">
-      <a href="${resultUrl}"><span>${element.value}</span></a>
-      <button type="button" onclick="removeSelectedURLElement(this)">X</button>
-    `;
-    wrap.appendChild(div);
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'selected_urls_list[]';
+    input.value = url;
+    const link = document.createElement('a');
+    link.href = 'detail?url=' + encodeURIComponent(url);
+    const span = document.createElement('span');
+    span.textContent = url;
+    link.appendChild(span);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'X';
+    button.addEventListener('click', function () { removeSelectedURLElement(button); });
+    div.append(input, link, button);
+    return div;
   }
 
   function removeSelectedURLElement(element) {
@@ -127,16 +140,7 @@
 
           console.log(list.length)
           for (let i = 0; i < list.length; i++) {
-              const currentUrl = window.location.pathname;
-              var resultUrl = currentUrl + "detail?url=" + encodeURIComponent(list[i]);
-              const div = document.createElement('div');
-              div.className = 'selected-url';
-              div.innerHTML = `
-                  <input type="hidden" name="selected_urls_list[]" value="${list[i]}">
-                  <a href="${resultUrl}"><span>${list[i]}</span></a>
-                  <button type="button" onclick="removeSelectedURLElement(this)">X</button>
-              `;
-              wrap.appendChild(div);
+              wrap.appendChild(selectedURLElement(list[i]));
           }
 
           urls = document.getElementsByName('selected_urls[]');

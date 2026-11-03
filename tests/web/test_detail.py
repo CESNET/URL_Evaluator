@@ -56,7 +56,7 @@ def test_overview_shows_most_reported_source_with_link_to_sources_tab(web_client
     page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
 
     assert "Most reported source</td>" in page
-    assert "honeynet-b\n" in page and "honeynet-a" not in page
+    assert "<td>honeynet-b, see details in" in page and "honeynet-a" not in page
     assert "tab=sources" in page and "see details in" in page and "sources tab</a>" in page
 
 
@@ -66,7 +66,7 @@ def test_overview_source_falls_back_to_url_sources_without_observations(web_clie
 
     page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
 
-    assert "<td>Manual\n" in page
+    assert "<td>Manual, see details in" in page
 
 
 def test_overview_shows_inactive_since(web_client, db):
@@ -391,3 +391,103 @@ def test_oidc_user_name(web_client, db):
     web_client.get("/detail", query_string={"url": URL}, environ_base=environ)
 
     assert db.execute("SELECT user FROM user_url_history").fetchone() == ("alice (Alice Šimková)",)
+
+
+def test_content_range_ends_with_the_last_fetch(web_client, db):
+    insert_url(db, URL, last_seen="2026-01-01")
+    content_id = insert_content(db)
+    insert_download(db, URL, content_id, fetched_at="2026-01-02T04:00:00+00:00")
+    insert_download(db, URL, content_id, fetched_at="2026-01-05T04:00:00+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert '<p class="content-range">2026-01-02 &nbsp;&ndash;&nbsp; 2026-01-05</p>' in page
+
+
+def test_overview_shows_mime_type_and_size_of_newest_content(web_client, db):
+    insert_url(db, URL, file_mime_type="application/x-sh", content_size=99999)
+    insert_download(db, URL, insert_content(db, b"x" * 2048), fetched_at="2026-01-01T04:00:00+00:00")
+    insert_download(db, URL, insert_content(db, b"y" * 10), fetched_at="2026-01-02T04:00:00+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert "<td>File mime type</td>" in page and "<td>application/x-sh</td>" in page
+    assert "<td>10 B, see details in" in page and "99999" not in page
+
+
+def test_overview_without_content(web_client, db):
+    insert_url(db, URL, content_size=1234)
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    assert "This URL has no content yet" in page
+
+
+def test_overview_shows_readable_vt_stats_with_link(web_client, db):
+    stats = {"harmless": 0, "malicious": 37, "undetected": 23, "type-unsupported": 16}
+    insert_url(db, URL, classification_reason="VT URL check", vt_stats=json.dumps(stats))
+
+    page = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+
+    vt_row = page[page.index("VirusTotal statistics"):page.index("Reported</td>")]
+    assert "37 malicious · 23 undetected · 16 type-unsupported" in vt_row
+    assert "https://www.virustotal.com/gui/url/" in vt_row
+
+
+def test_external_links_open_in_a_new_tab(web_client, db):
+    insert_url(db, "http://192.0.2.1/a.sh", classification_reason="VT URL check", hash="ab" * 32)
+
+    page = web_client.get("/detail", query_string={"url": "http://192.0.2.1/a.sh"}).get_data(as_text=True)
+
+    assert "”" not in page and 'target="_blank" rel="noopener noreferrer"' in page
+
+
+def test_url_without_reason_and_without_source(web_client, db):
+    insert_url(db, URL, classification_reason=None)
+
+    response = web_client.get("/detail", query_string={"url": URL})
+
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    source_row = page[page.index("Most reported source</td>"):page.index("Derived from</td>")]
+    assert "see details" not in source_row
+
+
+def test_unknown_tab_shows_overview(web_client, db):
+    insert_url(db, URL)
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "xyz"}).get_data(as_text=True)
+
+    assert 'class="detail-tab active"\n               href="/detail?url=' in page and "Classification reason" in page
+
+
+def test_class_history_times_formatted(web_client, db):
+    insert_url(db, URL)
+    insert_classification(db, URL, "malicious", created_at="2026-01-02 00:00:00")
+    insert_classification(db, URL, "harmless", created_at="2026-01-03T10:11:12.123456+00:00")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "class_history"}).get_data(as_text=True)
+
+    assert '<span class="ch-time">2026-01-02</span>' in page
+    assert '<span class="ch-time">2026-01-03 10:11:12 UTC</span>' in page
+
+
+def test_edit_from_detail_returns_to_detail(web_client, db):
+    insert_url(db, URL)
+
+    page = web_client.get("/detail", query_string={"url": URL, "show": "malicious"},
+                          environ_base=ANALYST).get_data(as_text=True)
+    response = web_client.post("/edit_detail", query_string={"url": URL, "show": "malicious", "back": "detail"},
+                               data={"class": "harmless", "reason": "manual", "note": ""}, environ_base=ANALYST)
+
+    assert "back=detail" in page and "show=malicious" in page
+    assert response.status_code == 302 and response.headers["Location"].startswith("/detail?url=")
+
+
+def test_reevaluate_keeps_the_tab(web_client, db):
+    insert_url(db, URL, evaluated="yes")
+
+    response = web_client.post("/detail", query_string={"url": URL, "tab": "sources", "show": "malicious"},
+                               environ_base=ANALYST)
+
+    assert "tab=sources" in response.headers["Location"] and "show=malicious" in response.headers["Location"]

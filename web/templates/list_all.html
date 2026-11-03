@@ -31,7 +31,7 @@
       {% if filter_params["q"] %} value="{{ filter_params["q"] }}" {% endif %}>
     {% if filter_params["q"] %}
     <button type="button" class="quick-search-clear" title="Clear search"
-      onclick="window.location.href='{{ url_for('list_all', page=1, show=show, clear_filters=True) }}';">&times;</button>
+      onclick="window.location.href='{{ url_for('list_all', page=1, show=show, q='') }}';">&times;</button>
     {% endif %}
   </form>
   <div class="btn-line">
@@ -113,6 +113,7 @@
             <option selected value="">---select---</option>
             <option {%if filter_params["status"]=='active' %} selected {% endif %} value="active">Active</option>
             <option {%if filter_params["status"]=='inactive' %} selected {% endif %} value="inactive">Inactive</option>
+            <option {%if filter_params["status"]=='unknown' %} selected {% endif %} value="unknown">Unknown</option>
           </select>
         </div>
 
@@ -204,14 +205,18 @@
   </form>
   {% endif %}
 
+  {% if not is_anon %}
   <div class="select select-all"> <input type="checkbox" onclick=selectAll(this) /> Select All</div>
+  {% endif %}
   <!-- URL count summary: total when no filter is applied, matching vs. total otherwise -->
   <div class="list-summary">
     {% if filters_active %}
     <p><strong>{{ record_count }}</strong> / <strong>{{ total_count }}</strong> URLs</p>
     <span class="filter-state applied">{{ active_filter_count }}/{{ filter_count }} {{ "filter" if active_filter_count == 1 else "filters" }} applied</span>
+    {% if can_cancel %}
     <button class="btn-style btn-small"
-      onclick="window.location.href = '{{ url_for('list_all', page=1, clear_filters=True) }}';">Cancel filtering</button>
+      onclick="window.location.href = '{{ url_for('list_all', page=1, show=show, clear_filters=True) }}';">Cancel filtering</button>
+    {% endif %}
     {% else %}
     <p>Total URLs: <strong>{{ total_count }}</strong></p>
     <span class="filter-state">no filters applied</span>
@@ -224,7 +229,7 @@
         <th class="url">
           <p>URL address</p>
           <div class="sort">
-            <button class="up sort-btn {{ route }} {% if order == 'asc' and key == 'url' %}active{% endif %}"
+            <button class="up sort-btn {% if order == 'asc' and key == 'url' %}active{% endif %}"
               onclick="location.href='{{ url_for('list_all', show=show, order='asc', key='url', page=1) }}'"></button>
             <button class="down sort-btn {% if order == 'desc' and key == 'url' %}active{% endif %}"
               onclick="location.href='{{ url_for('list_all', show=show, order='desc', key='url', page=1) }}'"></button>
@@ -292,7 +297,7 @@
       {% for url in url_list %}
       <tr class="table-row">
         <td class="url {{ url[4] }}" title="{{ url[0] }}">
-          <input type="checkbox" class="select" name="selected_urls[]" value="{{ url[0] }}">
+          {% if not is_anon %}<input type="checkbox" class="select" name="selected_urls[]" value="{{ url[0] }}">{% endif %}
           {{ url[0] }}
         </td>
         <td class="status {{url[7]}}">{{ url[7] }}</td>
