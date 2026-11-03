@@ -208,13 +208,14 @@ def test_add_urls_result(web_app, web_client, db, monkeypatch, raw, adding, stor
     assert db.execute("SELECT COUNT(*) FROM urls").fetchone()[0] == stored
 
 
-def test_adding_known_url_refreshes_it(web_client, db):
+def test_adding_known_url_changes_nothing(web_client, db):
     insert_url(db, "http://known.test/", last_seen="2026-01-01")
 
     page = web_client.post("/", data={"add-url": "http://known.test/"}, environ_base=ANALYST).get_data(as_text=True)
 
     assert "All submitted URLs are already in the database." in page
-    assert db.execute("SELECT occurrences FROM urls").fetchone() == (2,)
+    assert db.execute("SELECT occurrences, last_seen FROM urls").fetchone() == (1, "2026-01-01")
+    assert db.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 0
 
 
 def test_quick_search_with_quote(web_client, db):

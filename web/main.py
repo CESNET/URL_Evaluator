@@ -624,6 +624,14 @@ def detail():
             """, (url,)).fetchall()
         except Exception:
             observations = []
+        # urls.occurrences also counts the sightings from before the observations
+        # table existed (migration 001), which cannot be split per honeynet
+        unrecorded_sightings = (url_detail.occurrences or 0) - sum(o[3] for o in observations)
+        try:
+            row = db.execute("SELECT date(applied_at) FROM schema_migrations WHERE name = '001_observations.sql'").fetchone()
+            observations_since = row[0] if row else None
+        except Exception:
+            observations_since = None
 
         # Classification history (newest first); fall back to empty list when the
         # table does not exist yet (migration 002 not applied).
@@ -768,6 +776,7 @@ def detail():
         'detail.html', user=user, is_anon=is_anonymous(user), url=url_detail, sessions=sessions, show=show,
         links=links, inactive_for=inactive_for, tab=tab, top_source=top_source,
         observations=observations, tab_counts=tab_counts,
+        unrecorded_sightings=unrecorded_sightings, observations_since=observations_since,
         class_history=class_history,
         derived_from=derived_from, derived_from_in_db=derived_from_in_db,
         content_versions=content_versions,

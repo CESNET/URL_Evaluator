@@ -104,9 +104,9 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None, username=None):
     Insert a batch of URLs into the DB (used by the web UI bulk-add popup).
 
     Each URL is validated with is_valid(); invalid entries are skipped and
-    reported. URLs already present in the `urls` table are not duplicated –
-    instead their `last_seen` is refreshed and occurrences incremented
-    (consistent with the other collectors, e.g. honeynetasia2evaluator).
+    reported. URLs already present in the `urls` table are only reported back,
+    the DB is not changed for them (an analyst adding a known URL is not a
+    new sighting).
 
     Parameters:
         db        – an open SQLiteWrapper
@@ -119,7 +119,7 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None, username=None):
 
     Returns a dict with three lists: {
         "added":   [urls that were newly inserted],
-        "in_db":   [urls that already existed (last_seen refreshed)],
+        "in_db":   [urls that already existed (left unchanged)],
         "invalid": [urls that failed validation and were skipped],
     }
     """
@@ -132,10 +132,6 @@ def add_urls_bulk(db, urls, source="Manual", seen_date=None, username=None):
             continue
         existing = db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
         if existing:
-            db.execute(
-                "UPDATE urls SET last_seen = ?, occurrences = occurrences + 1 WHERE url = ?",
-                (date, url),
-            )
             result["in_db"].append(url)
         else:
             db.execute(

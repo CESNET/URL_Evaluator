@@ -281,6 +281,13 @@
                     {% endfor %}
                 </tbody>
             </table>
+            {% if unrecorded_sightings > 0 %}
+            <p class="content-meta-note sources-note">
+                {{ unrecorded_sightings }} more {{ 'sighting is' if unrecorded_sightings == 1 else 'sightings are' }}
+                counted only in the Overview &ldquo;Number of occurrences&rdquo; ({{ url.occurrences }}): {{ 'it was' if unrecorded_sightings == 1 else 'they were' }}
+                reported before sightings were recorded per honeynet{% if observations_since %} ({{ observations_since }}){% endif %}.
+            </p>
+            {% endif %}
             {% else %}
             <p class="tab-empty">No observations recorded for this URL yet.</p>
             {% endif %}
@@ -437,7 +444,7 @@
             {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">Every time a new content is found on URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is not automatically submitted. It can be submitted for analysis manually by a logged-in analyst.</p>
+                <p class="content-meta-note">Every time new content is found on the URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is submitted automatically only when the URL is evaluated (a new URL or a re-evaluation) and stays unclassified after all other checks and its content is an executable or a script. Any other sample can be submitted for analysis manually by a logged-in analyst. if HA does not have the sample available.</p>
             </div>
 
             {% for e in sandbox_entries %}

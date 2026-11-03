@@ -963,3 +963,9 @@
         width: 110px;
     }
 }
+
+/* Sources tab: sightings counted in Overview but not recorded per honeynet */
+.detail .sources-note {
+    margin-top: 12px;
+    font-size: 12px;
+}

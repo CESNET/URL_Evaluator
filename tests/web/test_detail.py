@@ -502,3 +502,17 @@ def test_content_tab_has_copy_button_for_sha256(web_client, db):
     page = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
 
     assert f'class="copy-btn" data-copy="{sha256}" onclick="copyToClipboard(this)"' in page
+
+
+def test_sources_tab_explains_sightings_counted_only_in_overview(web_client, db):
+    insert_url(db, URL, occurrences=5)
+    insert_observation(db, URL, honeynet="honeynet-a")
+    insert_observation(db, URL, honeynet="honeynet-a", observed_at="2026-01-02T12:00:00+00:00")
+    insert_url(db, "http://even.test/", occurrences=1)
+    insert_observation(db, "http://even.test/", honeynet="honeynet-a")
+
+    page = web_client.get("/detail", query_string={"url": URL, "tab": "sources"}).get_data(as_text=True)
+    even = web_client.get("/detail", query_string={"url": "http://even.test/", "tab": "sources"}).get_data(as_text=True)
+
+    assert "3 more sightings are" in page and "(5)" in page
+    assert "sources-note" not in even
