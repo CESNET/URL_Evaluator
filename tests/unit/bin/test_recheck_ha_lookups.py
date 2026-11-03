@@ -68,3 +68,12 @@ def test_exits_without_api_key(make_config):
         recheck_ha_lookups.main(["--config", config._test_path])
 
     assert exit_info.value.code == 1
+
+
+@pytest.mark.parametrize("args, delays", [([], [0.5]), (["--delay", "2"], [2.0]), (["--delay", "0"], [])])
+def test_waits_between_lookups(config, db, three_contents, http_mock, no_sleep, args, delays):
+    mock_ha_overview(http_mock, config, status=404)
+
+    recheck_ha_lookups.main(["--config", config._test_path, *args])
+
+    assert no_sleep == delays  # two outdated lookups -> one pause between them

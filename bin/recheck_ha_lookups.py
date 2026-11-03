@@ -12,13 +12,15 @@ up again (GET /overview/{sha256}) and stores the new result.
 
 The lookup only updates content.sandbox_info, like the daily lookup of
 activity_scanner: it classifies no URL and submits no sample. It stops after
-HTTP 429 (rate limit) -- run it again later for the rest.
+HTTP 429 (rate limit) -- run it again later for the rest. Requests are spaced
+by --delay seconds (0.5 by default) to spare the API rate limit.
 """
 
 import argparse
 import logging
 import os
 import sys
+import time
 from collections import Counter
 
 # Add to path the "one directory above the current file location" to find modules from "common"
@@ -45,6 +47,8 @@ def main(argv=None):
                         help='Path to evaluator config file')
     parser.add_argument('--dry-run', action='store_true',
                         help='Only count the outdated lookups, send no request')
+    parser.add_argument('--delay', type=float, default=0.5,
+                        help='Seconds to wait between two lookups (default: 0.5)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
     args = parser.parse_args(argv)
 
@@ -72,7 +76,9 @@ def main(argv=None):
             return
 
         outcomes = Counter()
-        for content_id, sha256 in contents:
+        for i, (content_id, sha256) in enumerate(contents):
+            if i and args.delay > 0:
+                time.sleep(args.delay)
             result, outcome = hybrid_analysis.check_content_outcome(db, config, content_id, sha256, force=True)
             if outcome == "skipped":
                 logger.warning("Hybrid Analysis API paused after a rate limit (HTTP 429), stopping - "
