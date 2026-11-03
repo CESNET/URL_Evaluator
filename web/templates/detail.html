@@ -470,7 +470,7 @@
                         {% if e.fetch_plan %}
                         <span class="ha-badge pending">waiting for report</span>
                         {% elif e.submission and e.submission.status != 'error' %}
-                        <span class="ha-badge pending">submitted by {{ e.submission.submitter }}</span>
+                        <span class="ha-badge pending">submitted by {{ e.submission.submitted_by or 'analyst' }}</span>
                         {% endif %}
                     </div>
                     {% if ha and ha.http_status and not ha.outdated %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}

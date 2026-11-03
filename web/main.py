@@ -609,6 +609,9 @@ def detail():
             # Since we are adding a specific API check, we'll return a 404 response.
             return make_response(jsonify({'error': 'URL not found in database'}), 404)
         url_detail = URLDetail(row)
+        # Do not reveal the name of the analyst who edited the URL to public viewers.
+        if url_detail.last_edit and is_anonymous(user):
+            url_detail.last_edit = "analyst"
         record_url_visit(db, user, url)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
@@ -702,8 +705,8 @@ def detail():
                     submission = hybrid_analysis.latest_submission(db, v["sha256"])
                 except Exception:
                     submission = None  # migration 004 not applied
-            # Do not reveal analyst names to public viewers.
-            if submission and is_anonymous(user):
+            # Do not reveal analyst names to public viewers (system submitters stay).
+            if submission and is_anonymous(user) and submission["submitted_by"] not in SYSTEM_ACTORS:
                 submission["submitted_by"] = "analyst"
             submission_active = bool(submission and submission["status"] in ("pending", "running", "done"))
             # Scheduled result fetches (10/20/30 min after submission, run by activity_scanner)

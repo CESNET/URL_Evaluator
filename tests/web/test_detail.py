@@ -541,3 +541,23 @@ def test_sandbox_texts_name_no_api_endpoint(web_client, db, content_dir):
     page = sandbox_page(web_client, ANALYST)
 
     assert "/overview" not in page and "/submit/file" not in page and "GET /" not in page
+
+
+def test_last_editor_is_hidden_from_anonymous(web_client, db):
+    insert_url(db, URL, last_edit="alice (Alice Analyst)")
+
+    anonymous = web_client.get("/detail", query_string={"url": URL}).get_data(as_text=True)
+    analyst = web_client.get("/detail", query_string={"url": URL}, environ_base=ANALYST).get_data(as_text=True)
+
+    assert "Alice Analyst" not in anonymous and "<td>analyst</td>" in anonymous
+    assert "alice (Alice Analyst)" in analyst
+
+
+@pytest.mark.parametrize("submitter, shown", [("alice (Alice Analyst)", "analyst"), ("evaluator", "evaluator")])
+def test_submitter_shown_to_anonymous(web_client, db, content_dir, submitter, shown):
+    content_id, sha256 = sandbox_content(db, content_dir, NOT_ANALYSED)
+    insert_sandbox_submission(db, content_id, sha256, status="done", submitted_by=submitter)
+
+    page = sandbox_page(web_client)
+
+    assert "Alice Analyst" not in page and f"by {shown}" in page
