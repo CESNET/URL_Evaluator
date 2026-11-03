@@ -516,3 +516,28 @@ def test_sources_tab_explains_sightings_counted_only_in_overview(web_client, db)
 
     assert "3 more sightings are" in page and "(5)" in page
     assert "sources-note" not in even
+
+
+# Lookup stored by the previous lookup request: HTTP 200 also for an unknown hash
+OUTDATED = {"http_status": 200, "tested": False, "checked_at": "2026-10-10T12:00:00+00:00",
+            "response": {"sha256s": ["x"], "reports": []}}
+
+
+def test_outdated_lookup_is_shown_as_not_reliable(web_client, db, content_dir):
+    sandbox_content(db, content_dir, OUTDATED)
+
+    page = sandbox_page(web_client, ANALYST)
+    content = web_client.get("/detail", query_string={"url": URL, "tab": "content"}).get_data(as_text=True)
+
+    assert "outdated lookup" in page and "Not reliable" in page
+    assert "not known to Hybrid Analysis (HTTP 200)" not in page and "HTTP 200</span>" not in page
+    assert "/sandbox/submit/" not in page
+    assert "outdated Hybrid Analysis lookup" in content
+
+
+def test_sandbox_texts_name_no_api_endpoint(web_client, db, content_dir):
+    sandbox_content(db, content_dir, NOT_ANALYSED)
+
+    page = sandbox_page(web_client, ANALYST)
+
+    assert "/overview" not in page and "/submit/file" not in page and "GET /" not in page

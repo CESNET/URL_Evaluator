@@ -367,16 +367,22 @@ def parse_filters(filter_params):
         # content_store.latest_content_id):
         # "analysed"     -> GET /overview/{sha256} answered HTTP 200 (report exists)
         # "not_analysed" -> GET /overview/{sha256} answered HTTP 404 (hash never analysed)
-        sandbox_status = {"analysed": 200, "not_analysed": 404}
-        if param == "sandbox" and value in sandbox_status:
+        # A lookup made by the previous lookup request (hybrid_analysis.is_outdated_lookup)
+        # is neither.
+        if param == "sandbox" and value in ("analysed", "not_analysed"):
             clauses.append(
-                "(SELECT CASE WHEN json_valid(c.sandbox_info) "  # json_extract() raises on invalid JSON
-                "THEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') END "
+                "(SELECT CASE WHEN NOT json_valid(c.sandbox_info) THEN NULL "  # json_extract() raises on invalid JSON
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.request') IS NULL "
+                "AND (json_type(c.sandbox_info, '$.hybrid_analysis.response.sha256s') IS NOT NULL "
+                "OR json_extract(c.sandbox_info, '$.hybrid_analysis.response.message') = 'Requested hash not found') "
+                "THEN 'outdated' "
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.tested') THEN 'analysed' "
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') = 404 THEN 'not_analysed' END "
                 "FROM download_observations d JOIN content c ON c.id = d.content_id "
                 "WHERE d.url = urls.url "
                 "ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = ?"
             )
-            params.append(sandbox_status[value])
+            params.append(value)
         # Filter on the content type detected by Magika: URLs that served
         # content of the given category in any downloaded version. Only known
         # category names are used.
@@ -686,6 +692,9 @@ def detail():
             seen_content.add(cid)
             row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (cid,)).fetchone()
             ha = hybrid_analysis.get_lookup(row[0]) if (row and hybrid_analysis is not None) else None
+            # The previous lookup request did not tell reliably whether the hash is known
+            if ha and hybrid_analysis.is_outdated_lookup(ha):
+                ha = dict(ha, outdated=True, tested=False)
             ha_submission = hybrid_analysis.get_submission(row[0]) if (row and hybrid_analysis is not None) else None
             submission = None
             if hybrid_analysis is not None and v.get("sha256"):
@@ -981,7 +990,7 @@ SUBMIT_MESSAGES = {
                              "after the submission; if it is not ready by then, the next daily activity scan fetches it. "
                              "Its verdict classifies the URLs serving the sample that are still unclassified."),
     "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
-    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash (GET /overview/{sha256} did not return 404)."),
+    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash."),
     "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),
     "submit_failed": ("error", "Hybrid Analysis rejected the submission."),
     "skipped": ("error", "Not submitted: Hybrid Analysis API is disabled or paused after a rate limit (HTTP 429)."),

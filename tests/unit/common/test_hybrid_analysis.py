@@ -402,3 +402,26 @@ def test_cached_lookup_with_invalid_checked_at_is_queried_again(http_mock, confi
 
     assert hybrid_analysis.check_content_outcome(db, config, content_id, SHA256)[1] == "checked"
     assert call.call_count == 1
+
+
+# Lookups stored by GET /search/hash, used until 2026-10-15
+OLD_UNKNOWN_200 = {"http_status": 200, "tested": False, "response": {"sha256s": [SHA256], "reports": []}}
+OLD_404 = {"http_status": 404, "tested": False, "response": {"message": "Requested hash not found"}}
+
+
+@pytest.mark.parametrize("lookup, outdated", [
+    (OLD_UNKNOWN_200, True),
+    (OLD_404, True),
+    ({"http_status": 404, "tested": False, "response": {"message": "Not Found"}}, False),
+    ({"http_status": 200, "tested": True, "response": {"sha256": SHA256, "verdict": "malicious"}}, False),
+    ({"http_status": 404, "tested": False, "response": "not json"}, False),
+    ({"request": "overview", "http_status": 404, "response": {"message": "Requested hash not found"}}, False),
+    (None, False),
+])
+def test_outdated_lookup(lookup, outdated):
+    assert hybrid_analysis.is_outdated_lookup(lookup) is outdated
+
+
+def test_outdated_lookup_is_not_submittable():
+    assert not hybrid_analysis.is_submittable(OLD_404)
+    assert hybrid_analysis.is_submittable({"http_status": 404, "response": {"message": "Not Found"}})

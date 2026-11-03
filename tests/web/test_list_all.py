@@ -135,6 +135,18 @@ def test_sandbox_filter_uses_newest_content_of_the_url(web_client, db, three_url
     assert listed(not_analysed, *three_urls) == {three_urls[0], three_urls[1]}
 
 
+@pytest.mark.parametrize("response", [{"sha256s": ["x"], "reports": []}, {"message": "Requested hash not found"}])
+def test_sandbox_filter_skips_outdated_lookups(web_client, db, three_urls, response):
+    status = 200 if "sha256s" in response else 404
+    db.execute("UPDATE content SET sandbox_info = ?",
+               (json.dumps({"hybrid_analysis": {"http_status": status, "tested": False, "response": response}}),))
+
+    analysed = web_client.post("/", data=filter_form(sandbox="analysed")).get_data(as_text=True)
+    not_analysed = web_client.post("/", data=filter_form(sandbox="not_analysed")).get_data(as_text=True)
+
+    assert listed(analysed, *three_urls) == set() and listed(not_analysed, *three_urls) == set()
+
+
 def test_invalid_sandbox_info_does_not_break_the_filter(web_client, db, three_urls):
     db.execute("UPDATE content SET sandbox_info = 'not json'")
 

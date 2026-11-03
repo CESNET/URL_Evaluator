@@ -244,6 +244,8 @@ def lookup_sha256(config, sha256):
     result = {
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "sha256": sha256,
+        # which lookup request answered (see is_outdated_lookup)
+        "request": "overview",
         "http_status": None,
         "tested": False,
         "error": None,
@@ -309,9 +311,25 @@ def get_submission(sandbox_info_json):
     return _load_sandbox_info(sandbox_info_json).get("hybrid_analysis_submission")
 
 
+def is_outdated_lookup(lookup):
+    """
+    True for a lookup stored by the GET /search/hash request used before
+    GET /overview/{sha256} (until 2026-10-15). Its answer is not reliable: it
+    was HTTP 200 with a "sha256s" list also for an unknown hash, and HTTP 404
+    "Requested hash not found" also for a hash with a report. Recognised by the
+    stored response body (lookups made since 2026-11-03 also carry "request");
+    bin/recheck_ha_lookups.py looks these hashes up again.
+    """
+    if not lookup or lookup.get("request"):
+        return False
+    response = lookup.get("response")
+    return isinstance(response, dict) and (
+        "sha256s" in response or response.get("message") == "Requested hash not found")
+
+
 def is_submittable(lookup):
     """True when the stored lookup says the hash was never analysed (GET /overview/{sha256} -> HTTP 404)."""
-    return bool(lookup) and lookup.get("http_status") == 404
+    return bool(lookup) and lookup.get("http_status") == 404 and not is_outdated_lookup(lookup)
 
 
 def classification_from_lookup(lookup):

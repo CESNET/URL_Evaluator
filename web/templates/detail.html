@@ -393,6 +393,9 @@
                                 <span class="sandbox-sep">&middot;</span>
                                 <span class="sandbox-name">Hybrid Analysis</span>
                                 <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">details &rarr;</a>
+                                {% elif ha and ha.outdated %}
+                                <span class="derived-none">outdated Hybrid Analysis lookup</span>
+                                <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">details &rarr;</a>
                                 {% elif ha and not ha.error %}
                                 <span class="sandbox-name">Not analysed on Hybrid Analysis</span>
                                 {% elif ha %}
@@ -444,7 +447,7 @@
             {% endwith %}
             {% if sandbox_entries %}
             <div class="content-meta">
-                <p class="content-meta-note">Every time new content is found on the URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is submitted automatically only when the URL is evaluated (a new URL or a re-evaluation) and stays unclassified after all other checks and its content is an executable or a script. Any other sample can be submitted for analysis manually by a logged-in analyst. if HA does not have the sample available.</p>
+                <p class="content-meta-note">Every time new content is found on the URL (checked daily), the hash of the content is looked up on Hybrid Analysis. Results are shown here. If the hash is not known to Hybrid Analysis, the sample is submitted automatically only when the URL is evaluated (a new URL or a re-evaluation) and stays unclassified after all other checks and its content is an executable or a script. Any other sample can be submitted for analysis manually by a logged-in analyst, if HA does not have the sample available.</p>
             </div>
 
             {% for e in sandbox_entries %}
@@ -455,6 +458,8 @@
                         <h3>Version {{ e.version }}</h3>
                         {% if ha and ha.tested %}
                         <span class="ha-badge tested">already analysed</span>
+                        {% elif ha and ha.outdated %}
+                        <span class="ha-badge unknown">outdated lookup</span>
                         {% elif ha and not ha.error %}
                         <span class="ha-badge not-tested">not analysed yet</span>
                         {% elif ha %}
@@ -468,7 +473,7 @@
                         <span class="ha-badge pending">submitted</span>
                         {% endif %}
                     </div>
-                    {% if ha and ha.http_status %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}
+                    {% if ha and ha.http_status and not ha.outdated %}<span class="version-status">HTTP {{ ha.http_status }}</span>{% endif %}
                 </header>
 
                 <table class="version-card-body">
@@ -561,7 +566,9 @@
                         </tr>
                         <tr>
                             <td>Response</td>
-                            {% if ha.tested %}
+                            {% if ha.outdated %}
+                            <td>Not reliable: looked up with the previous lookup method, which did not tell for sure whether Hybrid Analysis knows the hash. The hash will be looked up again.</td>
+                            {% elif ha.tested %}
                             <td>SHA-256 already known to Hybrid Analysis (HTTP {{ ha.http_status }}).</td>
                             {% elif ha.error %}
                             <td class="ha-error">Lookup failed: {{ ha.error }}</td>
@@ -597,7 +604,7 @@
                                 <span class="ha-fetch-wait" aria-hidden="true"></span>
                                 Waiting for the analysis &mdash; scheduled fetch {{ plan.attempt }}/{{ plan.attempts_total }} at
                                 <strong>{{ plan.next_fetch_at|fmt_ts }}</strong>
-                                <span class="derived-none">(GET /overview/{sha256} {{ plan.schedule }} min after the submission)</span>
+                                <span class="derived-none">(fetched {{ plan.schedule }} min after the submission)</span>
                                 <a class="sandbox-report" href="{{ url_for('detail', url=url.url, show=show, tab='sandbox') }}">refresh &rarr;</a>
                                 {% elif plan %}
                                 No report after the {{ plan.attempts_total }} scheduled fetches ({{ plan.schedule }} min after the submission)
@@ -628,13 +635,13 @@
                                     </select>
                                     <button type="submit" class="btn-style ha-submit-btn">Submit to Hybrid Analysis</button>
                                 </form>
-                                <p class="ha-submit-note">POST /submit/file &mdash; submitted samples and their reports are public on Hybrid Analysis.</p>
+                                <p class="ha-submit-note">Submitted samples and their reports are public on Hybrid Analysis.</p>
                             </td>
                         </tr>
                         {% elif ha_submit_enabled and not e.submission and not (ha and ha.tested) %}
                         <tr>
                             <td>Submit</td>
-                            <td class="derived-none">Available once the hash lookup (GET /overview/{sha256}) returned HTTP 404 and the sample file is stored.</td>
+                            <td class="derived-none">Available once the hash lookup found that Hybrid Analysis has never analysed the sample and the sample file is stored.</td>
                         </tr>
                         {% endif %}
                     </tbody>
