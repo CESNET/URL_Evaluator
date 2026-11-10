@@ -1,5 +1,6 @@
 """bin/evaluator2urlhaus.py, bin/evaluator2misp.py and bin/evaluator2misp_bysource.py (MISP client mocked)."""
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -219,8 +220,10 @@ def test_extract_ip_domain_port(evaluator2misp_mod, url, expected):
 
 
 def db_row(url="http://192.0.2.1:8080/a.sh", status="active", classification="malicious", source="Warden",
-           last_seen="2026-01-02"):
-    return (url, "da39a3ee", "2026-01-01", last_seen, "application/x-sh", "mirai", status, classification, source)
+           last_seen="2026-01-02", sha256="e3b0c442"):
+    return {"url": url, "hash": "da39a3ee", "first_seen": "2026-01-01", "last_seen": last_seen,
+            "file_mime_type": "application/x-sh", "threat_label": "mirai", "status": status,
+            "classification": classification, "source": source, "sha256": sha256}
 
 
 def attributes(obj):
@@ -234,6 +237,7 @@ def test_create_object_of_active_url(evaluator2misp_mod):
     assert [t.name for t in attrs["url"].tags] == ['rsit:malicious-code="malware-distribution"']
     assert attrs["ip-dst|port"].value == "192.0.2.1|8080" and attrs["ip-dst|port"].to_ids is True
     assert (attrs["hash"].value, attrs["malware-family"].value, attrs["source"].value) == ("da39a3ee", "mirai", "Warden")
+    assert attrs["sha256"].value == "e3b0c442"
     assert "domain" not in attrs
 
 
@@ -250,7 +254,7 @@ def test_create_object_of_inactive_miner_on_domain(evaluator2misp_mod):
 
 def misp_object(module, row):
     obj = module.create_object(row)
-    obj.id = str(abs(hash(row[0])) % 10 ** 6)
+    obj.id = str(abs(hash(row["url"])) % 10 ** 6)
     return obj
 
 
@@ -284,6 +288,8 @@ def test_sync_adds_new_updates_changed_and_deletes_old_urls(evaluator2misp_mod, 
     insert_source(db, "http://192.0.2.1/x86", "Warden")
     insert_source(db, "http://192.0.2.1/x86", "HoneyNet.Asia")
     insert_url(db, "http://too-old.test/", classification="malicious", last_seen="2025-12-01")  # misp_max_age: 60
+    insert_download(db, "http://192.0.2.1/x86", insert_content(db, b"old"), fetched_at="2026-02-27T00:00:00")
+    insert_download(db, "http://192.0.2.1/x86", insert_content(db, b"new"), fetched_at="2026-02-28T00:00:00")
     misp_event.add_object(misp_object(evaluator2misp_mod, db_row(
         url="http://192.0.2.1/x86", status="active", source="Warden", last_seen="2026-01-01")))
     misp_event.add_object(misp_object(evaluator2misp_mod, db_row(url="http://deleted.test/")))
@@ -296,6 +302,8 @@ def test_sync_adds_new_updates_changed_and_deletes_old_urls(evaluator2misp_mod, 
     assert changed["url"].to_ids is False and changed["ip-dst|port"].to_ids is False  # became inactive
     assert str(changed["last-seen"].value).startswith("2026-02-28")
     assert sorted(changed["source"].value.split(", ")) == ["HoneyNet.Asia", "Warden"]
+    assert changed["sha256"].value == hashlib.sha256(b"new").hexdigest()  # the latest download
+    assert "sha256" not in attributes(synced["http://new.test/a.sh"])  # nothing downloaded
     misp.publish.assert_called_once_with("1", alert=False)
     assert misp.update_attribute.call_count == 2  # comment attributes refreshed
 

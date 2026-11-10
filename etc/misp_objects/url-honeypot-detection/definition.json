@@ -7,7 +7,7 @@
         "first-seen"
     ],
     "uuid": "053aa75b-5fdb-4f5e-8cf8-3969d46f6d19",
-    "version": 5,
+    "version": 6,
     "attributes": {
         "url": {
             "description": "Full URL",
@@ -39,6 +39,11 @@
         "hash": {
             "description": "Hash of downloaded content",
             "misp-attribute": "sha1",
+            "ui-priority": 1
+        },
+        "sha256": {
+            "description": "SHA-256 hash of downloaded content (latest download)",
+            "misp-attribute": "sha256",
             "ui-priority": 1
         },
         "malware-family": {
