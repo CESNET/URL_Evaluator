@@ -23,6 +23,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # MISP object template of a URL (etc/misp_objects/url-honeypot-detection)
 OBJECT_NAME = "url-honeypot-detection"
 
+# Columns of a row loaded in sync_urls(), in the order of its SELECT
+DB_ROW_KEYS = ("url", "hash", "first_seen", "last_seen", "file_mime_type", "threat_label", "status",
+               "classification", "source", "sha256")
+
 logger = logging.getLogger("evaluator2misp_bysource.py")
 
 # Module state, set by init() (called from __main__ and by tests)
@@ -102,17 +106,18 @@ def update_attribute(obj, relation, attr_type, value, same=lambda old, new: old 
 
 def create_object(db_row):
     """
-    Create new MISP object from a DB row
+    Create new MISP object from a DB row (dict keyed by DB_ROW_KEYS)
     """
-    url = db_row[0]
-    hash = db_row[1]
-    first_seen = db_row[2]
-    last_seen = db_row[3]
-    file_mime_type = db_row[4]
-    threat_label = db_row[5]
-    status = db_row[6]
-    classification = db_row[7]
-    source = db_row[8]
+    url = db_row["url"]
+    hash = db_row["hash"]
+    sha256 = db_row["sha256"]
+    first_seen = db_row["first_seen"]
+    last_seen = db_row["last_seen"]
+    file_mime_type = db_row["file_mime_type"]
+    threat_label = db_row["threat_label"]
+    status = db_row["status"]
+    classification = db_row["classification"]
+    source = db_row["source"]
     ip, domain = extract_ip_domain_port(url)
 
     new_object = MISPObject(OBJECT_NAME, misp_objects_path_custom="/etc/url_evaluator/misp_objects/")
@@ -134,6 +139,8 @@ def create_object(db_row):
     # Add file hash if present
     if hash:
         new_object.add_attribute(object_relation="hash", simple_value=hash, Attribute={"type": "sha1", "value": hash})
+    if sha256:
+        new_object.add_attribute(object_relation="sha256", simple_value=sha256, Attribute={"type": "sha256", "value": sha256})
 
     # Add file type if present
     if file_mime_type:
@@ -208,7 +215,13 @@ def sync_urls(misp, db):
         u.threat_label,
         u.status,
         u.classification,
-        COALESCE(GROUP_CONCAT(us.source, ', '), 'Unknown')
+        COALESCE(GROUP_CONCAT(us.source, ', '), 'Unknown'),
+        (SELECT c.sha256
+         FROM download_observations d
+         JOIN content c ON c.id = d.content_id
+         WHERE d.url = u.url
+         ORDER BY d.fetched_at DESC, d.id DESC
+         LIMIT 1)
     FROM urls u
     LEFT JOIN url_source us ON us.url = u.url
     WHERE u.classification IN ('malicious', 'miner') AND u.last_seen >= ?
@@ -222,9 +235,10 @@ def sync_urls(misp, db):
     # Group DB records by source
     db_urls_by_source = {}
     for row in rows:
-        url = row[0]
+        db_row = dict(zip(DB_ROW_KEYS, row))
+        url = db_row["url"]
         for s in sources.get(url, ()):
-            db_urls_by_source.setdefault(s, {})[url] = row
+            db_urls_by_source.setdefault(s, {})[url] = db_row
 
     # Sync the data with MISP (each source has its own MISP event)
     for source in [
@@ -249,20 +263,24 @@ def sync_urls(misp, db):
         for obj in our_objects(event):
             url = obj.get_attributes_by_relation("url")[0]
             if url.value in db_urls:
-                if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
-                        (url.to_ids is True and db_urls[url.value][6] != 'active'):
+                db_row = db_urls[url.value]
+                if (url.to_ids is False and db_row["status"] == 'active') or \
+                        (url.to_ids is True and db_row["status"] != 'active'):
                     # URL status has changed, modify 'to_ids' flag
                     logger.debug(f"Updating IDS flag for '{url.value}'")
-                    url.to_ids = True if db_urls[url.value][6] == 'active' else False
+                    url.to_ids = True if db_row["status"] == 'active' else False
                     if ip := obj.get_attributes_by_relation("ip-dst|port"):
                         ip[0].to_ids = url.to_ids
                 # Last seen timestamp is outdated (the date of the MISP datetime is compared)
-                if update_attribute(obj, "last-seen", "datetime", db_urls[url.value][3],
+                if update_attribute(obj, "last-seen", "datetime", db_row["last_seen"],
                                     same=lambda old, new: str(old).startswith(new)):
                     logger.debug(f"Updating last-seen for '{url.value}'")
                 # New source(s) reported the URL
-                if update_attribute(obj, "source", "text", db_urls[url.value][8]):
+                if update_attribute(obj, "source", "text", db_row["source"]):
                     logger.debug(f"Updating source for '{url.value}'")
+                # Content was downloaded or has changed (also adds sha256 to objects of the older template)
+                if db_row["sha256"] and update_attribute(obj, "sha256", "sha256", db_row["sha256"]):
+                    logger.debug(f"Updating sha256 for '{url.value}'")
             else:
                 # URL was deleted, remove it from MISP too
                 logger.debug(f"Deleting old URL: {url}")

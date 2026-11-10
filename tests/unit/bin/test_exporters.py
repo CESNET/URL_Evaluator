@@ -379,9 +379,10 @@ def events_by_source(fake_misp):
     events = {}
 
     def search(eventinfo, **kwargs):
-        event = events.setdefault(eventinfo, MISPEvent())
-        event.info, event.id = eventinfo, str(len(events))
-        return [event]
+        if eventinfo not in events:  # the id must stay the same over repeated syncs
+            event = events[eventinfo] = MISPEvent()
+            event.info, event.id = eventinfo, str(len(events))
+        return [events[eventinfo]]
     fake_misp.search.side_effect = search
     fake_misp.get_event.side_effect = lambda event_id, pythonify: next(e for e in events.values() if e.id == event_id)
     fake_misp.update_event.side_effect = lambda event, pythonify: event
@@ -444,6 +445,19 @@ def test_bysource_nested_download_goes_to_the_source_of_the_first_url(
     evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
 
     assert event_urls(events_by_source, "GEANT T-Pot") == {loader, stage2, payload}
+
+
+def test_bysource_exports_sha256_of_the_latest_download(evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
+    url = insert_url(db, "http://hna.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, url, "HoneyNet.Asia")
+    insert_download(db, url, insert_content(db, b"old"), fetched_at="2026-02-27T00:00:00")
+
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)  # creates the object
+    insert_download(db, url, insert_content(db, b"new"), fetched_at="2026-02-28T00:00:00")
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)  # updates it
+
+    event = events_by_source["Malicious URLs from SSH honeypots (HoneyNet.Asia)"]
+    assert attributes(objects_by_url(event)[url])["sha256"].value == hashlib.sha256(b"new").hexdigest()
 
 
 @pytest.mark.parametrize("module", ["evaluator2misp", "evaluator2misp_bysource"])
