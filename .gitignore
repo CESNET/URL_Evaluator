@@ -109,7 +109,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-etc/config.yaml
 
 # Spyder project settings
 .spyderproject
@@ -129,7 +128,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-helper_dev_notes_scripts_etc/
 
-# Claude Code
-.claude/
+# ignroe my personal notes and my often use commands help file
+notes_commands_cheat_sheet/
