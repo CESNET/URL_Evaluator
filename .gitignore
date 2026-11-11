@@ -131,3 +131,5 @@ dmypy.json
 
 # ignroe my personal notes and my often use commands help file
 notes_commands_cheat_sheet/
+helper_dev_notes_scripts_etc/
+.claude/
