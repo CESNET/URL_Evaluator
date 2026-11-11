@@ -23,6 +23,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # MISP object template of a URL (etc/misp_objects/url-honeypot-detection)
 OBJECT_NAME = "url-honeypot-detection"
 
+# Comment attributes added to the event by hand, kept on top of the MISP UI by sync_urls()
+COMMENT_UUIDS = ("1716011a-b02b-427c-b042-242fc3e0df3e", "e5b21a21-0178-43c6-9d38-747f1f8c4811")
+
 # Columns of a row loaded in sync_urls(), in the order of its SELECT
 DB_ROW_KEYS = ("url", "hash", "first_seen", "last_seen", "file_mime_type", "threat_label", "status",
                "classification", "source", "sha256")
@@ -243,13 +246,15 @@ def sync_urls(misp, db):
     # Update event
     event = misp.update_event(event, pythonify=True)
 
-    # Refresh comment attributes (so that they remain visible in MISP UI)
-    comment1 = event.get_attribute_by_uuid("1716011a-b02b-427c-b042-242fc3e0df3e")
-    comment2 = event.get_attribute_by_uuid("e5b21a21-0178-43c6-9d38-747f1f8c4811")
-    comment1.timestamp = datetime.now(timezone.utc)
-    comment2.timestamp = datetime.now(timezone.utc)
-    misp.update_attribute(comment1)
-    misp.update_attribute(comment2)
+    # Refresh comment attributes (so that they remain visible in MISP UI); an event
+    # without them (e.g. newly created) is still published
+    attributes_by_uuid = {attr.uuid: attr for attr in event.attributes}
+    for uuid in COMMENT_UUIDS:
+        if comment := attributes_by_uuid.get(uuid):
+            comment.timestamp = datetime.now(timezone.utc)
+            misp.update_attribute(comment)
+        else:
+            logger.info(f"Comment attribute {uuid} not found in the event, not refreshed")
 
     # Commit changes
     misp.publish(event.id, alert=False)

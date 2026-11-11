@@ -319,6 +319,16 @@ def test_sync_creates_tagged_event_when_missing(evaluator2misp_mod, misp, misp_e
     assert "tlp:clear" in [c.args[1] for c in misp.tag.call_args_list]
 
 
+def test_sync_publishes_event_without_comment_attributes(evaluator2misp_mod, misp, misp_event, db):
+    insert_url(db, "http://new.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    misp_event.attributes = []  # e.g. a newly created event
+
+    evaluator2misp_mod.sync_urls(misp, db)
+
+    misp.update_attribute.assert_not_called()
+    misp.publish.assert_called_once_with("1", alert=False)
+
+
 def test_sync_without_malicious_urls_does_not_touch_misp(evaluator2misp_mod, misp, db):
     insert_url(db, "http://harmless.test/", classification="harmless")
 
