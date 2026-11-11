@@ -253,11 +253,15 @@ def sync_urls(misp, db):
         # Fetch all URLs currently in MISP
         misp_urls = [obj.get_attributes_by_relation("url")[0].value for obj in our_objects(event)]
 
+        # Count the changes: MISP rejects an update of an unchanged event
+        changes = 0
+
         # Add new URLs
         for url, db_row in db_urls.items():
             if url not in misp_urls:
                 logger.debug(f"Adding new URL: {url}")
                 event.add_object(create_object(db_row))
+                changes += 1
 
         # Update existing URLs
         for obj in our_objects(event):
@@ -271,23 +275,36 @@ def sync_urls(misp, db):
                     url.to_ids = True if db_row["status"] == 'active' else False
                     if ip := obj.get_attributes_by_relation("ip-dst|port"):
                         ip[0].to_ids = url.to_ids
+                    changes += 1
                 # Last seen timestamp is outdated (the date of the MISP datetime is compared)
                 if update_attribute(obj, "last-seen", "datetime", db_row["last_seen"],
                                     same=lambda old, new: str(old).startswith(new)):
                     logger.debug(f"Updating last-seen for '{url.value}'")
+                    changes += 1
                 # New source(s) reported the URL
                 if update_attribute(obj, "source", "text", db_row["source"]):
                     logger.debug(f"Updating source for '{url.value}'")
+                    changes += 1
                 # Content was downloaded or has changed (also adds sha256 to objects of the older template)
                 if db_row["sha256"] and update_attribute(obj, "sha256", "sha256", db_row["sha256"]):
                     logger.debug(f"Updating sha256 for '{url.value}'")
+                    changes += 1
             else:
                 # URL was deleted, remove it from MISP too
                 logger.debug(f"Deleting old URL: {url}")
                 obj.delete()  # soft delete, sent by update_event (delete_object(id) fails on the int id of a loaded event)
+                changes += 1
 
-        # Update event
-        event = misp.update_event(event, pythonify=True)
+        if not changes:
+            logger.info(f"No changes in the event of {source}, MISP not updated")
+            continue
+
+        # Update event (on failure PyMISP returns the error response instead of the event)
+        logger.info(f"Updating the event of {source} in MISP ({changes} changes)")
+        updated = misp.update_event(event, pythonify=True)
+        if not isinstance(updated, MISPEvent):
+            raise RuntimeError(f"MISP did not save the event of {source}: {updated.get('errors', updated)}")
+        event = updated
 
         # Commit changes
         misp.publish(event.id, alert=False)

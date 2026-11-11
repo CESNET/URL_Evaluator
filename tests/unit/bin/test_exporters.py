@@ -329,6 +329,49 @@ def test_sync_publishes_event_without_comment_attributes(evaluator2misp_mod, mis
     misp.publish.assert_called_once_with("1", alert=False)
 
 
+def test_sync_does_not_update_unchanged_event(evaluator2misp_mod, misp, db):
+    """MISP rejects an update of an unchanged event (not newer than its copy)."""
+    url = insert_url(db, "http://same.test/a.sh", classification="malicious", status="active", last_seen="2099-01-01")
+    insert_source(db, url, "Warden")
+    evaluator2misp_mod.sync_urls(misp, db)  # adds the URL
+    misp.reset_mock()
+
+    evaluator2misp_mod.sync_urls(misp, db)  # nothing changed in the DB
+
+    misp.update_event.assert_not_called()
+    misp.publish.assert_not_called()
+
+
+def test_bysource_does_not_update_unchanged_events(evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
+    url = insert_url(db, "http://same.test/a.sh", classification="malicious", status="active", last_seen="2099-01-01")
+    insert_source(db, url, "HoneyNet.Asia")
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)  # adds the URL to the HoneyNet.Asia event
+    assert fake_misp.update_event.call_count == 1
+    fake_misp.update_event.reset_mock()
+    fake_misp.publish.reset_mock()
+
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)  # nothing changed in the DB
+
+    fake_misp.update_event.assert_not_called()
+    fake_misp.publish.assert_not_called()
+
+
+@pytest.mark.parametrize("module", ["evaluator2misp", "evaluator2misp_bysource"])
+def test_rejected_update_ends_sync_with_misp_error(init_bin, fake_misp, misp_event, db, module):
+    exporter = init_bin(module)
+    url = insert_url(db, "http://new.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, url, "HoneyNet.Asia")
+    fake_misp.search.return_value = [misp_event]
+    fake_misp.get_event.return_value = misp_event
+    fake_misp.update_event.side_effect = None
+    fake_misp.update_event.return_value = {
+        "saved": False, "errors": "Event could not be saved: Event in the request not newer than the local copy."}
+
+    with pytest.raises(RuntimeError, match="not newer than the local copy"):
+        exporter.sync_urls(fake_misp, db)
+    fake_misp.publish.assert_not_called()
+
+
 def test_sync_without_malicious_urls_does_not_touch_misp(evaluator2misp_mod, misp, db):
     insert_url(db, "http://harmless.test/", classification="harmless")
 
@@ -415,7 +458,7 @@ def test_bysource_sorts_urls_into_events_of_their_source(evaluator2misp_bysource
 
     assert event_urls(events_by_source, "HoneyNet.Asia") == {loader, payload}
     assert event_urls(events_by_source, "CESNET Hugo") == set()
-    assert fake_misp.publish.call_count == 4  # every source event is published
+    assert fake_misp.publish.call_count == 1  # only the changed event (empty events are not updated)
 
 
 def test_bysource_exports_warden_url_to_its_honeynet_event(
@@ -439,7 +482,7 @@ def test_bysource_url_content_without_discovered_source_does_not_stop_sync(
     evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
 
     assert event_urls(events_by_source, "HoneyNet.Asia") == {other}
-    assert fake_misp.publish.call_count == 4
+    assert fake_misp.publish.call_count == 1
 
 
 def test_bysource_nested_download_goes_to_the_source_of_the_first_url(
