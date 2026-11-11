@@ -20,26 +20,26 @@ It allows users to browse the database, manually add new URLs, see detailed info
 
 ### Classification schema
 
-| Classification | Reason                     | Description                                                                                               |
-|----------------|----------------------------|-----------------------------------------------------------------------------------------------------------|
-| harmless       | VT URL check               | URL is listed on VirusTotal and meets the criteria to be classified as harmless                           | 
-|                | VT file check              | URL content is listed on VirusTotal and meets the criteria to be classified as harmless                   | 
-| malicious      | Blacklist check            | URL is listed on evaluation blacklist (URLhaus)                                                           | 
-|                | MB file check              | URL content is listed on MalwareBazaar                                                                    | 
-|                | VT URL check               | URL is listed on VirusTotal and meets the criteria to be classified as malicious                          | 
-|                | VT file check              | URL content is listed on VirusTotal and meets the criteria to be classified as malicious                  | 
-| unclassified   | Waiting for evaluation     | URL is yet to be evaluated                                                                                |
-|                | No entry                   | URL (or its content) wasn't found by any classification sources                                           |
-|                | VT URL check inconclusive  | URL is listed on VirusTotal, but doesn't meet the criteria to be classified as harmless/malicious         |
-|                | VT file check inconclusive | URL content is listed on VirusTotal, but doesn't meet the criteria to be classified as harmless/malicious |
-|                | VT limit exceeded          | VirusTotal rate limit was exceeded, URL will be re-evaluated later                                        |
-|                | No content                 | URL has no content                                                                                        |
-|                | File too large             | URL content is too large to be downloaded and analyzed                                                    |
-| unreachable    | Connection refused         | URL is refusing connections                                                                               |
-|                | Connection timeout         | Connection to URL timed out                                                                               |
-|                | Too many redirects         | Connection to URL failed because of too many redirects                                                    |
-|                | Status code <...>          | Connection to URL failed with specified status code                                                       |
-| invalid        | Invalid format             | URL format is invalid                                                                                     |
+| Classification | Reason                         | Description                                                                                               |
+|----------------|--------------------------------|-----------------------------------------------------------------------------------------------------------|
+| harmless       | VT URL check                   | URL is listed on VirusTotal and meets the criteria to be classified as harmless                           |
+|                | VT file check                  | URL content is listed on VirusTotal and meets the criteria to be classified as harmless                   |
+|                | DDoS target                    | URL occurs in a single session more often than the DDoS threshold                                         |
+| malicious      | Blacklist check                | URL is listed on evaluation blacklist (URLhaus)                                                           |
+|                | MB file check                  | URL content is listed on MalwareBazaar                                                                    |
+|                | VT URL check                   | URL is listed on VirusTotal and meets the criteria to be classified as malicious                          |
+|                | VT file check                  | URL content is listed on VirusTotal and meets the criteria to be classified as malicious                  |
+|                | Hybrid Analysis check          | URL content (executable or script) has a malicious Hybrid Analysis report                                 |
+|                | Downloading from malicious URL | URL content downloads a malicious URL (back-propagation)                                                  |
+| unclassified   | Waiting for evaluation         | URL is yet to be evaluated                                                                                |
+|                | No entry                       | URL (or its content) wasn't found by any classification sources                                           |
+|                | VT URL check inconclusive      | URL is listed on VirusTotal, but doesn't meet the criteria to be classified as harmless/malicious         |
+|                | VT file check inconclusive     | URL content is listed on VirusTotal, but doesn't meet the criteria to be classified as harmless/malicious |
+|                | VT limit exceeded              | VirusTotal rate limit was exceeded, URL will be re-evaluated later                                        |
+|                | No content                     | URL returned no content (error status or empty body)                                                      |
+|                | File too large                 | URL content is too large to be downloaded and analyzed                                                    |
+| unreachable    | Connection error               | URL could not be downloaded (refused, timeout, too many redirects, ...), the cause is on the Content tab  |
+| invalid        | Invalid format                 | URL format is invalid                                                                                     |
 
 ## Main modules
 

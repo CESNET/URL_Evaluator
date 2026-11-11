@@ -1,0 +1,72 @@
+# Config template used by the test suite (tests/conftest.py: make_config).
+# db_path / content_dir are replaced with paths inside the test's tmp_path;
+# all keys are dummy values, external services are mocked.
+
+db_path: "<set by make_config>"
+content_dir: "<set by make_config>"
+
+scheduler:
+  timezone: "UTC"
+  honeynetasia2evaluator: {hour: 12, minute: 0}
+  tpot2evaluator: {hour: 12, minute: 2}
+  activity_scanner: {hour: 12, minute: 5}
+  db_cleaner: {hour: 12, minute: 25}
+  evaluator2urlhaus: {hour: 12, minute: 30}
+  evaluator2misp: {hour: 12, minute: 30}
+  evaluator2misp_bysource: {hour: 12, minute: 30}
+
+max_age_inactive: 30
+max_age_invalid: 7
+max_file_size: 1 # MB, small so that "file too large" is cheap to test
+bl_update_time: 15
+
+ddos_threshold:
+  same_url_single_session: 10
+  same_domain_single_session: 100
+  same_domain_all_sessions: 500
+
+http_proxy: ""
+
+warden_config: "/nonexistent/warden_client.cfg"
+warden_filter:
+  cat: "Intrusion.UserCompromise"
+warden_sources:
+  "CESNET Hugo":
+    "Node.SW": "hugo-cowrie"
+  "CZ.NIC HaaS":
+    "Node.Name": "cznic_haas"
+  "Warden (unknown node)": {}
+
+misp_url: "https://misp.test"
+misp_key: "test-misp-key"
+misp_verify_cert: false
+misp_max_age: 60
+
+vt_url: "https://www.virustotal.com/api/v3/"
+vt_key: "test-vt-key"
+vt_minute_quota: 4
+vt_threshold:
+  malicious: 0.2
+  harmless: 0.8
+
+urlhaus_blacklist_url: "https://urlhaus.abuse.ch/downloads/text/"
+urlhaus_detail_url: "https://urlhaus-api.abuse.ch/v1/url/"
+urlhaus_submit_url: "https://urlhaus.abuse.ch/api/"
+urlhaus_key: "test-urlhaus-key"
+
+mb_url: "https://mb-api.abuse.ch/api/v1/"
+mb_key: "test-mb-key"
+
+ha_url: "https://hybrid-analysis.com/api/v2"
+ha_key: "test-ha-key"
+ha_recheck_hours: 12
+ha_stats_interval_minutes: 10
+ha_environment_id: 330
+
+hna_url: "https://feeds.honeynet.asia/url/latest-url-unique.csv"
+
+tpot_url: "https://tpot.test/urls/long?days=1"
+tpot_key: "test-tpot-key"
+
+base_url: ""
+flask_secret_key: "test-secret-key"

@@ -2,6 +2,7 @@ requests
 apscheduler
 regex
 python-magic
+magika
 pyyaml
 virustotal-python
 pymisp==2.4.196

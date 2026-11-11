@@ -7,9 +7,10 @@ import sys
 import argparse
 import logging
 import base64
+import json
 
 from datetime import datetime, timezone
-from flask import Flask, jsonify, render_template, make_response, redirect, url_for
+from flask import Flask, jsonify, render_template, make_response, redirect, url_for, abort, send_file, flash
 from werkzeug.exceptions import BadRequestKeyError
 from pymisp import PyMISP, PyMISPError
 
@@ -17,19 +18,38 @@ from pymisp import PyMISP, PyMISPError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 from common.config import Config
 from common.db import SQLiteWrapper
-from common.utils import is_valid, get_domain
+from common.utils import is_valid, get_domain, split_url_lines, add_urls_bulk, mark_source_urls_malicious
+try:
+    from common import content_store
+except Exception:
+    content_store = None
+try:
+    from common import hybrid_analysis
+except Exception:
+    hybrid_analysis = None
+try:
+    from common.file_classifier import CATEGORIES as CONTENT_TYPE_CATEGORIES
+except Exception:
+    CONTENT_TYPE_CATEGORIES = {}
 
-# Global variables
-page = 1
 rows_per_page = 25
-filters = ""
-filter_params = {}
+# Columns the URL list can be sorted by (ORDER BY cannot take a bound parameter)
+SORT_COLUMNS = ("url", "status", "first_seen", "last_seen", "occurrences", "classification", "classification_reason")
+# Values allowed by the CHECK constraint of urls.classification
+CLASSIFICATIONS = ("malicious", "harmless", "unreachable", "unclassified", "invalid", "miner")
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Receive messages from Warden, find suspicious URLs and save them to evaluator database.")
 parser.add_argument('--config', '-c', action='store', default="/etc/url_evaluator/config.yaml", help='Path to evaluator config file')
 parser.add_argument('--verbose', '-v', action='store_true', help='Verbose mode')
-args = parser.parse_args()
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+else:
+    # When imported (mod_wsgi in production, pytest), use the installed config;
+    # URL_EVALUATOR_CONFIG overrides it. The repo etc/config.yaml below is only
+    # a fallback for development/tests.
+    args = argparse.Namespace(config=os.environ.get("URL_EVALUATOR_CONFIG", "/etc/url_evaluator/config.yaml"), verbose=False)
 
 # Set logger
 LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
@@ -40,17 +60,79 @@ if args.verbose:
     logger.setLevel('DEBUG')
 
 # Load config
-config = Config(args.config)
+try:
+    config = Config(args.config)
+except FileNotFoundError:
+    # Fallback for tests/development if the config is missing at the specified path
+    import os
+    fallback_path = os.path.join(os.path.dirname(__file__), '../etc/config.yaml')
+    if os.path.exists(fallback_path):
+        config = Config(fallback_path)
+    else:
+        raise
 
-# Connect to MISP
+# Connect to MISP (optional - if the connection fails, MISP features are disabled)
+misp = None
 try:
     misp = PyMISP(config.misp_url, config.misp_key, config.misp_verify_cert)
 except Exception as e:
-    print(f"Error: Cannot connect to MISP: {e}")
+    logger.warning(f"Cannot connect to MISP, MISP features disabled: {e}")
 
 # Init flask
 application = app = Flask(__name__)
 app.secret_key = config.flask_secret_key
+# Local "Sign in" popup for testing the authenticated GUI; enabled only by the
+# development server below (never under mod_wsgi in production).
+app.config["DEV_LOGIN"] = False
+
+
+@app.template_filter('human_bytes')
+def human_bytes(num):
+    """Render a byte count in a Figma-style human readable form (e.g. 44.3 KB)."""
+    try:
+        num = float(num)
+    except (TypeError, ValueError):
+        return ""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(num) < 1024.0:
+            if unit == "B":
+                return f"{int(num)} {unit}"
+            return f"{num:.1f} {unit}"
+        num /= 1024.0
+    return f"{num:.1f} PB"
+
+
+@app.template_filter('fmt_ts')
+def fmt_ts(value, with_time=True):
+    """
+    Normalise an ISO-ish timestamp to 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS UTC'.
+    Accepts both 'T' and space separators and strips the timezone designator for
+    display (all stored timestamps are UTC).
+    """
+    if not value:
+        return ""
+    s = str(value).replace("T", " ")
+    s = s.split("+")[0].split("Z")[0].strip()
+    # drop sub-second precision for display
+    if "." in s:
+        s = s.split(".")[0]
+    return (s + " UTC") if with_time else s.split(" ")[0]
+
+
+@app.template_filter('vt_stats')
+def vt_stats(value):
+    """
+    Render the VirusTotal last_analysis_stats JSON as e.g.
+    '37 malicious · 23 undetected · 16 type-unsupported'; the raw value when it is not JSON.
+    """
+    try:
+        stats = json.loads(value)
+        counts = sorted(((k, int(v)) for k, v in stats.items() if int(v)), key=lambda kv: -kv[1])
+    except (TypeError, ValueError, AttributeError):
+        return value
+    # malicious first, it is what the analyst looks for
+    counts.sort(key=lambda kv: kv[0] != "malicious")
+    return " · ".join(f"{n} {k}" for k, n in counts) or "no results"
 
 
 def get_urlhaus_link(url):
@@ -66,6 +148,8 @@ def get_urlhaus_link(url):
 
 
 def get_misp_link(url_detail):
+    if misp is None:
+        return None
     if url_detail.reported == "yes":
         try:
             events = misp.search(controler="events", value=url_detail.url, type_attribute='url')
@@ -77,6 +161,18 @@ def get_misp_link(url_detail):
         return None
 
 
+# Identity marker returned by get_user() when no authentication context is
+# present (neither OIDC claims nor HTTP REMOTE_USER). Used to gate all
+# edit/add actions and to anonymise human actors for public viewers.
+ANONYMOUS_USER = "--unknown--"
+
+# Actors that represent automated system scripts (not human analysts). These
+# must always be shown verbatim in the classification history, even to public
+# viewers; human actors are anonymised instead.
+SYSTEM_ACTORS = {"system", "evaluator", "evaluator-backprop", "session-ddos",
+                 "hybrid-analysis", "hybrid-analysis-backprop"}
+
+
 def get_user(environ):
     # Get name of logged-in user
     if "OIDC_CLAIM_preferred_username" in environ:
@@ -86,9 +182,102 @@ def get_user(environ):
                f"({environ.get('OIDC_CLAIM_name').encode('latin1').decode('utf-8')})"
     elif "REMOTE_USER" in environ:
         user = environ['REMOTE_USER']
+    elif app.config["DEV_LOGIN"] and flask.has_request_context() and flask.session.get("dev_user"):
+        # Local development login (see dev_login below)
+        user = flask.session["dev_user"]
     else:
-        user = "--unknown--"
+        user = ANONYMOUS_USER
     return user
+
+
+def is_anonymous(user):
+    """Return True when the request has no authenticated identity."""
+    return user == ANONYMOUS_USER
+
+
+# How many recently visited URLs are kept per user (user_url_history).
+RECENT_URLS_LIMIT = 10
+
+
+def record_url_visit(db, user, url):
+    """
+    Remember that `user` opened the detail page of `url` and keep only the
+    RECENT_URLS_LIMIT most recent URLs of that user. Anonymous viewers are
+    not recorded. Best-effort: never breaks the page (e.g. migration 010 not
+    applied yet).
+    """
+    if is_anonymous(user):
+        return
+    try:
+        db.execute("""
+            INSERT INTO user_url_history (user, url, visited_at) VALUES (?, ?, ?)
+            ON CONFLICT (user, url) DO UPDATE SET visited_at = excluded.visited_at
+        """, (user, url, datetime.now(timezone.utc).isoformat(timespec="microseconds")))
+        db.execute("""
+            DELETE FROM user_url_history
+            WHERE user = ? AND url NOT IN (
+                SELECT url FROM user_url_history WHERE user = ?
+                ORDER BY visited_at DESC, rowid DESC LIMIT ?
+            )
+        """, (user, user, RECENT_URLS_LIMIT))
+    except Exception as e:
+        logger.debug(f"Could not record URL visit of {user}: {e}")
+
+
+def recent_urls(db, user):
+    """The user's recently visited URLs, newest first, as (url, visited_at) rows."""
+    if is_anonymous(user):
+        return []
+    try:
+        return db.execute("""
+            SELECT url, visited_at FROM user_url_history WHERE user = ?
+            ORDER BY visited_at DESC, rowid DESC LIMIT ?
+        """, (user, RECENT_URLS_LIMIT)).fetchall()
+    except Exception:
+        return []
+
+
+@app.context_processor
+def inject_dev_login():
+    """Header state for the local development Sign in / Sign out button."""
+    if not app.config["DEV_LOGIN"]:
+        return {"dev_login": False}
+    return {"dev_login": True,
+            "dev_user": flask.session.get("dev_user"),
+            "header_is_anon": is_anonymous(get_user(flask.request.environ))}
+
+
+@app.route('/dev/login', methods=['POST'])
+def dev_login():
+    """Local testing only: sign in as whatever name was typed (no password check)."""
+    if not app.config["DEV_LOGIN"]:
+        abort(404)
+    username = flask.request.form.get("username", "").strip()
+    if username:
+        flask.session["dev_user"] = username
+        logger.warning(f"DEV MODE: signed in as '{username}' (no password check)")
+    return redirect(flask.request.referrer or url_for('list_all'))
+
+
+@app.route('/dev/logout', methods=['POST'])
+def dev_logout():
+    if not app.config["DEV_LOGIN"]:
+        abort(404)
+    flask.session.pop("dev_user", None)
+    return redirect(flask.request.referrer or url_for('list_all'))
+
+
+@app.context_processor
+def inject_recent_urls():
+    """Expose the logged-in user's recently visited URLs to every page (header dropdown)."""
+    user = get_user(flask.request.environ)
+    if is_anonymous(user):
+        return {"recent_urls": []}
+    try:
+        with SQLiteWrapper(config.db_path) as db:
+            return {"recent_urls": recent_urls(db, user)}
+    except Exception:
+        return {"recent_urls": []}
 
 
 def get_ip(url):
@@ -100,44 +289,127 @@ def get_ip(url):
         return ""
 
 
-def parse_filters():
-    parsed_filters = " WHERE url NOT NULL"
+def parse_filters(filter_params):
+    """
+    WHERE and ORDER BY clauses of the URL list for `filter_params`, and their
+    parameters. User input only reaches the SQL as a bound parameter; the sort
+    column and order are whitelisted.
+    """
+    clauses, params = ["url NOT NULL"], []
     for param, value in filter_params.items():
         if param == "order" or param == "order_key" or value == "":
             continue
         if param == "classification":
-            parsed_filters += f" AND classification='{value}'"
+            clauses.append("classification = ?")
+            params.append(value)
         if param == "url":
-            parsed_filters += f" AND url LIKE '%{value}%'"
-        if param == "hash":
-            parsed_filters += f" AND hash LIKE '%{value}%'"
+            clauses.append("url LIKE ?")
+            params.append(f"%{value}%")
+        # Quick search: URL substring, or (for a hex-only query of at least 8
+        # characters) a substring of the SHA-256 of any downloaded content.
+        if param == "q":
+            clause = "url LIKE ?"
+            params.append(f"%{value}%")
+            sha256 = value.lower()
+            if len(sha256) >= 8 and re.fullmatch(r"[0-9a-f]+", sha256):
+                clause += (
+                    " OR EXISTS (SELECT 1 FROM download_observations d "
+                    "JOIN content c ON c.id = d.content_id "
+                    "WHERE d.url = urls.url AND c.sha256 LIKE ?)"
+                )
+                params.append(f"%{sha256}%")
+            clauses.append(f"({clause})")
         if param == "note":
-            parsed_filters += f" AND note LIKE '%{value}%'"
+            clauses.append("note LIKE ?")
+            params.append(f"%{value}%")
         if param == "reason":
-            parsed_filters += f" AND classification_reason LIKE '%{value}%'"
+            clauses.append("classification_reason LIKE ?")
+            params.append(f"%{value}%")
         if param == "status":
-            parsed_filters += f" AND status='{value}'"
+            clauses.append("status = ?")
+            params.append(value)
         if param == "src":
-            parsed_filters += f" AND url IN (SELECT url FROM url_source WHERE source='{value}')"
+            clauses.append("url IN (SELECT url FROM url_source WHERE source = ?)")
+            params.append(value)
         if param == "evaluated":
-            parsed_filters += f" AND evaluated='{value}'"
-    parsed_filters += f" ORDER BY {filter_params['order_key']} {filter_params['order']}"
-    return parsed_filters
-
-
-def back_propagation(db, url):
-    src_urls = db.execute("SELECT urls.url FROM discovered_urls AS s JOIN urls ON urls.url = s.src_url WHERE s.url = ? AND urls.classification != 'malicious'", (url,)).fetchall()
-    if src_urls:
-        src_urls = ", ".join(f"'{src_url[0]}'" for src_url in src_urls)
-        db.execute(f"UPDATE urls SET classification = 'malicious', classification_reason = 'Downloading from malicious URL' WHERE url IN ({src_urls})")
+            clauses.append("evaluated = ?")
+            params.append(value)
+        # Filter on the SHA-256 of any content downloaded from the URL (full
+        # match only). Anything other than 64 hex digits matches nothing.
+        if param == "sha256":
+            sha256 = value.lower()
+            if re.fullmatch(r"[0-9a-f]{64}", sha256):
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM download_observations d "
+                    "JOIN content c ON c.id = d.content_id "
+                    "WHERE d.url = urls.url AND c.sha256 = ?)"
+                )
+                params.append(sha256)
+            else:
+                clauses.append("0")
+        # Filter on whether the URL has any stored (downloadable) content.
+        # "yes" -> at least one download_observations row references a content
+        # row; "no" -> no such row. Uses EXISTS/NOT EXISTS against
+        # download_observations joined to content so orphaned content_ids are
+        # not counted as available.
+        if param == "has_content":
+            exists_clause = (
+                "EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url AND d.content_id IS NOT NULL)"
+            )
+            if value == "yes":
+                clauses.append(exists_clause)
+            elif value == "no":
+                clauses.append(f"NOT {exists_clause}")
+        # Filter on the Hybrid Analysis lookup stored per content, checked on
+        # the newest downloaded content of the URL (same ordering as
+        # content_store.latest_content_id):
+        # "analysed"     -> GET /overview/{sha256} answered HTTP 200 (report exists)
+        # "not_analysed" -> GET /overview/{sha256} answered HTTP 404 (hash never analysed)
+        # A lookup made by the previous lookup request (hybrid_analysis.is_outdated_lookup)
+        # is neither.
+        if param == "sandbox" and value in ("analysed", "not_analysed"):
+            clauses.append(
+                "(SELECT CASE WHEN NOT json_valid(c.sandbox_info) THEN NULL "  # json_extract() raises on invalid JSON
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.request') IS NULL "
+                "AND (json_type(c.sandbox_info, '$.hybrid_analysis.response.sha256s') IS NOT NULL "
+                "OR json_extract(c.sandbox_info, '$.hybrid_analysis.response.message') = 'Requested hash not found') "
+                "THEN 'outdated' "
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.tested') THEN 'analysed' "
+                "WHEN json_extract(c.sandbox_info, '$.hybrid_analysis.http_status') = 404 THEN 'not_analysed' END "
+                "FROM download_observations d JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url "
+                "ORDER BY d.fetched_at DESC, d.id DESC LIMIT 1) = ?"
+            )
+            params.append(value)
+        # Filter on the content type detected by Magika: URLs that served
+        # content of the given category in any downloaded version. Only known
+        # category names are used.
+        if param == "content_type" and value in CONTENT_TYPE_CATEGORIES:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM download_observations d "
+                "JOIN content c ON c.id = d.content_id "
+                "WHERE d.url = urls.url AND c.file_category = ?)"
+            )
+            params.append(value)
+    order_key = filter_params.get("order_key")
+    order_key = order_key if order_key in SORT_COLUMNS else "last_seen"
+    order = "ASC" if str(filter_params.get("order")).lower() == "asc" else "DESC"
+    return f" WHERE {' AND '.join(clauses)} ORDER BY {order_key} {order}", params
 
 
 @app.route('/', methods=['GET', 'POST'])
 def list_all():
-    global page
-    global filter_params
-
     user = get_user(flask.request.environ)
+
+    # Filters and the current page of this user (kept in their session, every
+    # user has their own)
+    filter_params = dict(flask.session.get("filter_params", {}))
+    page = flask.session.get("page", 1)
+    # The sort order survives filtering and clearing the filters
+    order = flask.request.args.get("order", filter_params.get("order", "desc"))
+    order_key = flask.request.args.get("key", filter_params.get("order_key", "last_seen"))
 
     # clear filters
     clear = flask.request.args.get('clear_filters')
@@ -147,10 +419,21 @@ def list_all():
     # get current page
     page_arg = flask.request.args.get('page')
     if page_arg:
-        page = int(page_arg)
+        try:
+            page = max(int(page_arg), 1)
+        except ValueError:
+            page = 1
 
-    # variables for adding new url
+    # variables for adding new urls (bulk add returns per-URL results)
     adding = ""
+    add_results = None
+
+    # quick URL search from the top search bar (GET keeps the query bookmarkable,
+    # POST form submits are redirected to the equivalent GET)
+    quick_search = flask.request.args.get('q')
+    if quick_search is not None:
+        page = 1
+        filter_params["q"] = quick_search.strip()
 
     # set filters
     if flask.request.method == 'POST':
@@ -158,8 +441,7 @@ def list_all():
             find_url = flask.request.form['find-url'].strip()
             filter_params["url"] = find_url
 
-            find_hash = flask.request.form['find-hash'].strip()
-            filter_params["hash"] = find_hash
+            filter_params["sha256"] = flask.request.form.get('find-sha256', '').strip()
 
             find_note = flask.request.form['find-note'].strip()
             filter_params["note"] = find_note
@@ -175,21 +457,47 @@ def list_all():
 
             filter_src = flask.request.form['src'].strip()
             filter_params["src"] = filter_src
+
+            filter_has_content = flask.request.form.get('has_content', '').strip()
+            filter_params["has_content"] = filter_has_content
+
+            filter_sandbox = flask.request.form.get('sandbox', '').strip()
+            filter_params["sandbox"] = filter_sandbox
+
+            filter_params["content_type"] = flask.request.form.get('content_type', '').strip()
+
+            # The panel has no "evaluated" field: drop the one a show tab set,
+            # so it does not stay applied unseen
+            filter_params.pop("evaluated", None)
+
         except BadRequestKeyError:
             pass
 
-        # add new url
+        # add new url(s) – the popup textarea accepts one URL per line (commas and
+        # whitespace also work as separators); each entry is validated and stored
+        # individually, per-URL results are shown to the analyst.
         try:
-            if (add_url := flask.request.form['add-url'].strip()) and is_valid(add_url):
+            raw_urls = flask.request.form['add-url']
+            if is_anonymous(user):
+                # Public/unauthenticated users must not add URLs.
+                logger.warning(f"Blocked add-URL attempt by anonymous user: {raw_urls!r}")
+                adding = "fail"
+                raise BadRequestKeyError()
+            candidates = split_url_lines(raw_urls)
+            if candidates:
                 with SQLiteWrapper(config.db_path) as db:
-                    t_now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    in_db = db.execute("SELECT url, occurrences FROM urls WHERE url = ?", (add_url,)).fetchall()
-                    if not in_db:
-                        db.execute("INSERT INTO urls (url, first_seen, last_seen, domain) VALUES (?, ?, ?, ?)", (add_url, t_now, t_now, get_domain(add_url)))
-                        db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (add_url, "Manual"))
-                        adding = "success"
-                    else:
-                        adding = "in_db"
+                    add_results = add_urls_bulk(db, candidates, source="Manual", username=user)
+                if add_results["added"] and not add_results["invalid"] and not add_results["in_db"]:
+                    # every submitted URL was newly added
+                    adding = "success"
+                elif add_results["added"]:
+                    # some URLs added, others were duplicates or invalid
+                    adding = "partial"
+                elif add_results["in_db"]:
+                    # nothing new: every valid URL was already stored
+                    adding = "in_db"
+                else:
+                    adding = "fail"
             else:
                 adding = "fail"
         except BadRequestKeyError:
@@ -204,25 +512,49 @@ def list_all():
         filter_params["evaluated"] = "yes"
 
     # set order of the list
-    order = flask.request.args.get("order", "desc")
-    order_key = flask.request.args.get("key", "last_seen")
-
     filter_params["order"] = order
     filter_params["order_key"] = order_key
-    filters = parse_filters()
+    filters, params = parse_filters(filter_params)
+
+    # Which filter keys (excluding sorting) count as "a filter is applied" for
+    # the URL count summary shown in the GUI.
+    filter_keys = ("q", "url", "sha256", "note", "reason", "classification", "status", "src", "evaluated", "has_content", "sandbox", "content_type")
+    filters_active = any(filter_params.get(k) for k in filter_keys)
+    # "Cancel filtering" keeps the show tab, so offer it only when something
+    # beyond the tab's own filter is applied
+    show_keys = {"not_evaluated": ("evaluated",), "malicious": ("classification",),
+                 "unclassified": ("classification", "evaluated")}.get(show, ())
+    can_cancel = any(filter_params.get(k) for k in filter_keys if k not in show_keys)
+    # Filters as the user sees them (quick search + filter panel fields) for the
+    # "x/y filters applied" info; the show tabs count as the classification
+    # filter.
+    filter_groups = (("q",), ("url",), ("sha256",), ("classification", "evaluated"), ("reason",), ("note",),
+                     ("src",), ("status",), ("has_content",), ("content_type",), ("sandbox",))
+    active_filter_count = sum(1 for group in filter_groups if any(filter_params.get(k) for k in group))
 
     with SQLiteWrapper(config.db_path) as db:
+        # get number of pages and URL counts (record_count respects the active
+        # filters, total_count is the size of the whole URL table)
+        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters, params).fetchall()[0][0]
+        total_count = db.execute("SELECT COUNT(*) FROM urls").fetchall()[0][0]
+        page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
+        page = min(page, page_count)
+
         # get url details
-        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + f" LIMIT {rows_per_page} OFFSET {rows_per_page * (page - 1)}").fetchall()
+        url_list = db.execute("SELECT url, first_seen, last_seen, occurrences, classification, classification_reason, note, status FROM urls" + filters + " LIMIT ? OFFSET ?",
+                              (*params, rows_per_page, rows_per_page * (page - 1))).fetchall()
 
         # get list of sources
         sources = db.execute("SELECT DISTINCT source FROM url_source").fetchall()
 
-        # get number of pages
-        record_count = db.execute("SELECT COUNT(*) FROM urls" + filters).fetchall()[0][0]
-        page_count = math.ceil(record_count / rows_per_page) if record_count > 0 else 1
+    flask.session["filter_params"] = filter_params
+    flask.session["page"] = page
 
-    return render_template('list_all.html', user=user, url_list=url_list, order=order, key=order_key, show=show, adding=adding, page=page, page_count=page_count, filter_params=filter_params, sources=sources)
+    return render_template('list_all.html', user=user, is_anon=is_anonymous(user), url_list=url_list, order=order, key=order_key, show=show, adding=adding, add_results=add_results, page=page, page_count=page_count, filter_params=filter_params, sources=sources, record_count=record_count, total_count=total_count, filters_active=filters_active, can_cancel=can_cancel, active_filter_count=active_filter_count, filter_count=len(filter_groups), content_type_categories=CONTENT_TYPE_CATEGORIES)
+
+
+# Tabs of the URL detail page
+DETAIL_TABS = ("overview", "content", "sources", "sandbox", "class_history")
 
 
 class URLDetail:
@@ -256,31 +588,189 @@ def detail():
     user = get_user(flask.request.environ)
     show = flask.request.args.get('show')
     url = flask.request.args.get('url')
+    tab = flask.request.args.get('tab', 'overview')
+    if tab not in DETAIL_TABS:
+        tab = 'overview'
 
     with SQLiteWrapper(config.db_path) as db:
         if flask.request.method == 'POST':
+            # Re-evaluation is a mutation -> forbidden for anonymous users.
+            if is_anonymous(user):
+                logger.warning(f"Blocked re-evaluate attempt on {url} by anonymous user")
+                return make_response(jsonify({'error': 'Forbidden'}), 403)
             db.execute("UPDATE urls SET evaluated = 'no' WHERE url = ?", (url,))
-            return redirect(url_for('detail', url=url))
+            return redirect(url_for('detail', url=url, show=show, tab=tab))
 
         # get url details
-        url_detail = URLDetail(db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone())
+        row = db.execute("SELECT url, first_seen, last_seen, hash, classification, classification_reason, note, reported, occurrences, vt_stats, evaluated, file_mime_type, content_size, threat_label, status, last_active, last_edit, eval_later FROM urls WHERE url = ? LIMIT 1", (url,)).fetchone()
+        if not row:
+            # To avoid crashing in a real environment, return a 404 page or a JSON error.
+            # In the context of the existing app, we return a render_template or redirect.
+            # Since we are adding a specific API check, we'll return a 404 response.
+            return make_response(jsonify({'error': 'URL not found in database'}), 404)
+        url_detail = URLDetail(row)
+        # Do not reveal the name of the analyst who edited the URL to public viewers.
+        if url_detail.last_edit and is_anonymous(user):
+            url_detail.last_edit = "analyst"
+        record_url_visit(db, user, url)
         url_detail.src = [row[0] for row in db.execute("SELECT source FROM url_source WHERE url = ?", (url,)).fetchall()]
         url_detail.src_urls = db.execute("SELECT src_url FROM discovered_urls WHERE url = ?", (url_detail.url,)).fetchall()
         url_detail.contained_urls = db.execute("SELECT url FROM discovered_urls WHERE src_url = ?", (url,)).fetchall()
         sessions = db.execute("SELECT sessions.session, sessions.idea_id FROM sessions JOIN url_session ON url_session.session=sessions.session_hash WHERE url_session.url = ?", (url,)).fetchall()
+
+        # Sources tab: aggregate observations per honeynet (fall back to source label).
+        # One row per honeynet with first/last observation and total sightings.
+        try:
+            observations = db.execute("""
+                SELECT COALESCE(honeynet, source) AS source_name,
+                       MIN(observed_at)            AS first_observed,
+                       MAX(observed_at)            AS last_observed,
+                       COUNT(*)                    AS occurrences
+                FROM observations
+                WHERE url = ?
+                GROUP BY COALESCE(honeynet, source)
+                ORDER BY first_observed
+            """, (url,)).fetchall()
+        except Exception:
+            observations = []
+        # urls.occurrences also counts the sightings from before the observations
+        # table existed (migration 001), which cannot be split per honeynet
+        unrecorded_sightings = (url_detail.occurrences or 0) - sum(o[3] for o in observations)
+        try:
+            row = db.execute("SELECT date(applied_at) FROM schema_migrations WHERE name = '001_observations.sql'").fetchone()
+            observations_since = row[0] if row else None
+        except Exception:
+            observations_since = None
+
+        # Classification history (newest first); fall back to empty list when the
+        # table does not exist yet (migration 002 not applied).
+        try:
+            class_history = db.execute("""
+                SELECT classification, reason, note, actor, created_at
+                FROM classification_history
+                WHERE url = ?
+                ORDER BY created_at DESC, id DESC
+            """, (url,)).fetchall()
+        except Exception:
+            class_history = []
+
+        # Privacy gate: public/unauthenticated viewers must not see the names
+        # of analysts who edited classifications manually. System-script actors
+        # (evaluator, session-ddos, ...) stay intact. We anonymise by replacing
+        # the actor of any non-system entry with a generic label.
+        if is_anonymous(user):
+            class_history = [
+                (c, r, n, (a if a in SYSTEM_ACTORS else "analyst"), t)
+                for (c, r, n, a, t) in class_history
+            ]
+
+        # The URL this one was derived from (extracted from), if any (internal detail link).
+        derived_from = url_detail.src_urls[0][0] if url_detail.src_urls else None
+        derived_from_in_db = bool(derived_from and db.execute("SELECT 1 FROM urls WHERE url = ? LIMIT 1", (derived_from,)).fetchone())
+
+        # Content tab: group identical consecutive downloads into versions
+        # (per Figma mockup). Fall back to an empty list when the new tables do
+        # not exist yet (migration 003 not applied).
+        try:
+            if content_store is not None:
+                content_versions = content_store.get_content_versions(db, url)
+            else:
+                content_versions = []
+        except Exception:
+            content_versions = []
+
+        # Sandbox tab: Hybrid Analysis lookup stored per distinct content
+        # (newest version first). The lookup itself runs in evaluator /
+        # activity_scanner when the content is downloaded.
+        # Logged-in analysts may submit a sample whose hash lookup answered
+        # HTTP 404 (never analysed) and that has no active submission yet.
+        ha_submit_enabled = (not is_anonymous(user) and tab == 'sandbox' and hybrid_analysis is not None
+                             and hybrid_analysis.is_enabled(config))
+        sandbox_entries = []
+        seen_content = set()
+        for v in reversed(content_versions):
+            cid = v.get("content_id")
+            if cid is None or cid in seen_content:
+                continue
+            seen_content.add(cid)
+            row = db.execute("SELECT sandbox_info FROM content WHERE id = ?", (cid,)).fetchone()
+            ha = hybrid_analysis.get_lookup(row[0]) if (row and hybrid_analysis is not None) else None
+            # The previous lookup request did not tell reliably whether the hash is known
+            if ha and hybrid_analysis.is_outdated_lookup(ha):
+                ha = dict(ha, outdated=True, tested=False)
+            ha_submission = hybrid_analysis.get_submission(row[0]) if (row and hybrid_analysis is not None) else None
+            submission = None
+            if hybrid_analysis is not None and v.get("sha256"):
+                try:
+                    submission = hybrid_analysis.latest_submission(db, v["sha256"])
+                except Exception:
+                    submission = None  # migration 004 not applied
+            # Do not reveal analyst names to public viewers (system submitters stay).
+            if submission and is_anonymous(user) and submission["submitted_by"] not in SYSTEM_ACTORS:
+                submission["submitted_by"] = "analyst"
+            submission_active = bool(submission and submission["status"] in ("pending", "running", "done"))
+            # Scheduled result fetches (10/20/30 min after submission, run by activity_scanner)
+            fetch_plan = None
+            if submission and submission["status"] in ("pending", "running"):
+                schedule = hybrid_analysis.fetch_schedule(config)
+                fetch_plan = {
+                    "waiting": bool(submission.get("next_fetch_at")),
+                    "next_fetch_at": submission.get("next_fetch_at"),
+                    "attempt": (submission.get("fetch_attempts") or 0) + 1,
+                    "attempts_total": len(schedule),
+                    "schedule": ", ".join(str(m) for m in schedule),
+                }
+            sandbox_entries.append({
+                "version": v["version"],
+                "content_id": cid,
+                "sha256": v.get("sha256"),
+                "ha": ha,
+                "submission": submission,
+                "ha_submission": ha_submission,
+                "fetch_plan": fetch_plan,
+                "can_submit": bool(ha_submit_enabled and hybrid_analysis.is_submittable(ha)
+                                   and not submission_active
+                                   and resolve_content_file(v.get("file_path"))),
+            })
+        ha_lookup_by_content = {e["content_id"]: e["ha"] for e in sandbox_entries}
+
+        # Current classification (for the per-version sandbox label) and the
+        # date range banner shown at the top of the Content tab.
+        current_classification = url_detail.classification
+        content_range_start = content_versions[0]["first_fetched"][:10] if content_versions else None
+        content_range_end = content_versions[-1]["last_fetched"][:10] if content_versions else None
+        # Overview "Content size": the newest stored content, as in the Content tab
+        latest_content_size = next((v["file_size"] for v in reversed(content_versions)
+                                    if v.get("content_id") and v.get("file_size") is not None), None)
+
+        # Badge counts for the tab bar (0 => the template hides the badge)
+        tab_counts = {
+            "content": len(content_versions),
+            "sources": len(observations),
+            "sandbox": sum(1 for e in sandbox_entries if e["ha"] and e["ha"].get("tested")),
+            "class_history": len(class_history),
+        }
 
     # count not active days
     inactive_for = 0
     if url_detail.status == 'inactive' and url_detail.last_active:
         inactive_for = (datetime.now(timezone.utc).date() - datetime.strptime(url_detail.last_active, '%Y-%m-%d').date()).days
 
+    # Overview "Source": the honeynet/source with the most sightings (same
+    # grouping as the Sources tab); the url_source labels when nothing is observed.
+    if observations:
+        top_source = max(observations, key=lambda o: o[3])[0]
+    else:
+        top_source = ", ".join(url_detail.src)
+
     # get link for external sources
     reason_link = None
-    if url_detail.reason == "Blacklist check":
+    reason = url_detail.reason or ""
+    if reason == "Blacklist check":
         reason_link = get_urlhaus_link(url)
-    elif "VT file check" in url_detail.reason:
+    elif "VT file check" in reason:
         reason_link = f"https://www.virustotal.com/gui/file/{url_detail.hash}"
-    elif "VT URL check" in url_detail.reason:
+    elif "VT URL check" in reason:
         encoded_url = base64.urlsafe_b64encode(url_detail.url.encode()).decode().rstrip("=")
         reason_link = f"https://www.virustotal.com/gui/url/{encoded_url}"
 
@@ -294,7 +784,25 @@ def detail():
         "joe-sandbox": f"https://www.joesandbox.com/analysis/search?q={url_detail.hash}"
     }
 
-    return render_template('detail.html', user=user, url=url_detail, sessions=sessions, show=show, links=links, inactive_for=inactive_for)
+    return render_template(
+        'detail.html', user=user, is_anon=is_anonymous(user), url=url_detail, sessions=sessions, show=show,
+        links=links, inactive_for=inactive_for, tab=tab, top_source=top_source,
+        observations=observations, tab_counts=tab_counts,
+        unrecorded_sightings=unrecorded_sightings, observations_since=observations_since,
+        class_history=class_history,
+        derived_from=derived_from, derived_from_in_db=derived_from_in_db,
+        content_versions=content_versions,
+        content_range_start=content_range_start,
+        content_range_end=content_range_end,
+        latest_content_size=latest_content_size,
+        current_classification=current_classification,
+        sandbox_entries=sandbox_entries,
+        ha_lookup_by_content=ha_lookup_by_content,
+        ha_submit_enabled=ha_submit_enabled,
+        ha_environments=hybrid_analysis.ENVIRONMENTS if hybrid_analysis is not None else {},
+        ha_default_environment=getattr(config, "ha_environment_id", None)
+                               or (hybrid_analysis.DEFAULT_ENVIRONMENT_ID if hybrid_analysis is not None else None)
+    )
 
 
 @app.route('/edit_detail', methods=['GET', 'POST'])
@@ -303,18 +811,31 @@ def edit_detail():
     url = flask.request.args.get('url')
     show = flask.request.args.get('show')
 
+    # Editing a classification is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning(f"Blocked edit_detail access by anonymous user (url={url})")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
+
     with SQLiteWrapper(config.db_path) as db:
+        url_list = db.execute("SELECT * FROM urls WHERE url = ? LIMIT 1", (url,)).fetchall()
+        if not url_list:
+            abort(404)
         if flask.request.method == 'POST':
             note = flask.request.form['note']
             classification = flask.request.form['class']
             reason = flask.request.form['reason']
+            if classification not in CLASSIFICATIONS:
+                return make_response(jsonify({'error': 'Unknown classification'}), 400)
             evaluated = "yes" if classification != "unclassified" else "no"
             db.execute("UPDATE urls SET note = ?, classification = ?, classification_reason = ?, last_edit = ?, evaluated = ? WHERE url = ?", (note, classification, reason, user, evaluated, url))
+            # Analyst decision -> record in the classification history
+            db.record_classification(url, classification, reason=reason, note=note, actor=user)
             if classification == "malicious":
-                back_propagation(db, url)
+                mark_source_urls_malicious(db, url, f"{user}-backprop")
+            # Back where the edit was opened from (the detail page or the list)
+            if flask.request.args.get('back') == 'detail':
+                return redirect(url_for('detail', url=url, show=show))
             return redirect(url_for("list_all", show=show))
-
-        url_list = db.execute("SELECT * FROM urls WHERE url = ? LIMIT 1", (url,)).fetchall()
 
     return render_template('edit_detail.html', user=user, url=url_list[0], show=show)
 
@@ -324,36 +845,63 @@ def bulk_edit():
     user = get_user(flask.request.environ)
     action = flask.request.form.get("action")
     if action == "reevaluate":
+        # Re-evaluate (bulk) is a mutation -> forbidden for anonymous users.
+        if is_anonymous(user):
+            logger.warning("Blocked bulk re-evaluate attempt by anonymous user")
+            return make_response(jsonify({'error': 'Forbidden'}), 403)
         selected_urls = flask.request.form.getlist('selected_urls_list[]')
         if selected_urls:
-            urls_string = "('" + "', '".join(selected_urls) + "')"
+            placeholders = ", ".join("?" * len(selected_urls))
             with SQLiteWrapper(config.db_path) as db:
-                db.execute(f"UPDATE urls SET evaluated = 'no' WHERE url IN {urls_string}")
+                db.execute(f"UPDATE urls SET evaluated = 'no' WHERE url IN ({placeholders})", selected_urls)
         return redirect(url_for("list_all"))
 
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
-    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user)
+    return render_template('bulk_edit.html', selected_urls=selected_urls, user=user, is_anon=is_anonymous(user))
 
 
 @app.route('/bulk_edit_action', methods=['POST'])
 def bulk_edit_action():
     user = get_user(flask.request.environ)
+    # Bulk classification edit is a mutation -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning("Blocked bulk_edit_action attempt by anonymous user")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
     selected_urls = flask.request.form.getlist('selected_urls_list[]')
     note = flask.request.form['note']
     classification = flask.request.form['class']
     classification_reason = flask.request.form['reason']
-    evaluated = "yes" if classification != "unclassified" else "no"
-    urls_string = "('" + "', '".join(selected_urls) + "')"
+    if classification and classification not in CLASSIFICATIONS:
+        return make_response(jsonify({'error': 'Unknown classification'}), 400)
+    if not selected_urls:
+        return redirect(url_for("list_all"))
+    placeholders = ", ".join("?" * len(selected_urls))
     with SQLiteWrapper(config.db_path) as db:
         if note:
-            db.execute(f"UPDATE urls SET note = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (note, user, evaluated))
+            db.execute(f"UPDATE urls SET note = ?, last_edit = ? WHERE url IN ({placeholders})", (note, user, *selected_urls))
         if classification:
-            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification, user, evaluated))
+            # Only a new classification decides whether the URL still waits for evaluation
+            evaluated = "yes" if classification != "unclassified" else "no"
+            db.execute(f"UPDATE urls SET classification = ?, last_edit = ?, evaluated = ? WHERE url IN ({placeholders})",
+                       (classification, user, evaluated, *selected_urls))
         if classification_reason:
-            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ?, evaluated = ? WHERE url IN {urls_string}", (classification_reason, user, evaluated))
+            db.execute(f"UPDATE urls SET classification_reason = ?, last_edit = ? WHERE url IN ({placeholders})",
+                       (classification_reason, user, *selected_urls))
+        # Analyst decision -> record in the classification history for each URL
+        # (with its current classification when only the note / reason changed)
+        if classification or note or classification_reason:
+            for url in selected_urls:
+                if current := db.execute("SELECT classification FROM urls WHERE url = ?", (url,)).fetchone():
+                    db.record_classification(
+                        url,
+                        current[0],
+                        reason=classification_reason or None,
+                        note=note or None,
+                        actor=user
+                    )
         if classification == "malicious":
             for url in selected_urls:
-                back_propagation(db, url)
+                mark_source_urls_malicious(db, url, f"{user}-backprop")
     return redirect(url_for("list_all"))
 
 
@@ -387,3 +935,117 @@ def api_url_stats():
         "src": ", ".join([s[0] for s in url_sources]),
     }
     return make_response(jsonify(return_dict), 200)
+
+
+def resolve_content_file(file_path):
+    """
+    Return the real path of a stored content file when it exists inside the
+    configured content_dir, otherwise None. The path always comes from the DB,
+    the confinement guards against a tampered/moved file_path.
+    """
+    content_dir = getattr(config, "content_dir", None)
+    if not file_path or not content_dir:
+        return None
+    try:
+        base = os.path.realpath(content_dir)
+        real = os.path.realpath(file_path)
+    except Exception:
+        return None
+    if not real.startswith(base + os.sep) or not os.path.isfile(real):
+        return None
+    return real
+
+
+@app.route('/content/download/<int:content_id>')
+def download_content(content_id):
+    """
+    Serve a stored content sample.
+
+    The on-disk path is taken from the DB (never from user input) and resolved
+    against the configured content_dir, so the route cannot be abused to read
+    arbitrary files. Files are forced to download as attachments.
+    """
+    with SQLiteWrapper(config.db_path) as db:
+        row = db.execute(
+            "SELECT file_path, sha256, mime_type FROM content WHERE id = ?",
+            (content_id,)
+        ).fetchone()
+    if not row:
+        abort(404)
+    file_path, sha256, mime_type = row
+
+    real = resolve_content_file(file_path)
+    if real is None:
+        abort(404)
+
+    short = (sha256 or "sample")[:24]
+    return send_file(
+        real,
+        mimetype=mime_type or "application/octet-stream",
+        as_attachment=True,
+        download_name=f"{short}.bin",
+    )
+
+
+# Message shown after a submission attempt: outcome -> (category, text).
+SUBMIT_MESSAGES = {
+    "submitted": ("success", "Sample submitted to Hybrid Analysis. Its report is fetched automatically 10, 20 and 30 minutes "
+                             "after the submission; if it is not ready by then, the next daily activity scan fetches it. "
+                             "Its verdict classifies the URLs serving the sample that are still unclassified."),
+    "already_submitted": ("info", "This sample has already been submitted to Hybrid Analysis."),
+    "already_analysed": ("info", "Not submitted: Hybrid Analysis already knows this hash."),
+    "lookup_failed": ("error", "Not submitted: the Hybrid Analysis hash lookup failed, try again later."),
+    "submit_failed": ("error", "Hybrid Analysis rejected the submission."),
+    "skipped": ("error", "Not submitted: Hybrid Analysis API is disabled or paused after a rate limit (HTTP 429)."),
+}
+
+
+@app.route('/sandbox/submit/<int:content_id>', methods=['POST'])
+def sandbox_submit(content_id):
+    """
+    Submit a stored content sample to Hybrid Analysis (POST /submit/file).
+    Only for logged-in users; the sample is sent only when its hash lookup
+    (GET /overview/{sha256}, re-checked here) answers HTTP 404.
+    """
+    user = get_user(flask.request.environ)
+    url = flask.request.form.get('url', '')
+    show = flask.request.form.get('show') or None
+
+    # Sending a sample to a third party is an action -> forbidden for anonymous users.
+    if is_anonymous(user):
+        logger.warning(f"Blocked sandbox submission of content {content_id} by anonymous user")
+        return make_response(jsonify({'error': 'Forbidden'}), 403)
+    if hybrid_analysis is None or not hybrid_analysis.is_enabled(config):
+        category, message = SUBMIT_MESSAGES["skipped"]
+        flash(message, category)
+        return redirect(url_for('detail', url=url, show=show, tab='sandbox'))
+
+    try:
+        environment_id = int(flask.request.form.get('environment_id', ''))
+    except ValueError:
+        environment_id = None
+    if environment_id not in hybrid_analysis.ENVIRONMENTS:
+        return make_response(jsonify({'error': 'Unknown environment_id'}), 400)
+
+    with SQLiteWrapper(config.db_path) as db:
+        row = db.execute("SELECT file_path, sha256 FROM content WHERE id = ?", (content_id,)).fetchone()
+        if not row:
+            abort(404)
+        file_path = resolve_content_file(row[0])
+        if file_path is None:
+            abort(404)
+        result, outcome = hybrid_analysis.submit_content(
+            db, config, content_id, file_path, row[1], user, environment_id)
+
+    logger.info(f"Hybrid Analysis submission of content {content_id} ({row[1]}) by {user}: {outcome}")
+    category, message = SUBMIT_MESSAGES[outcome]
+    if outcome == "submit_failed" and result and result.get("error"):
+        message = f"{message.rstrip('.')}: {result['error']}"
+    flash(message, category)
+    return redirect(url_for('detail', url=url, show=show, tab='sandbox'))
+
+
+if __name__ == '__main__':
+    app.config["DEV_LOGIN"] = True
+    logger.warning("DEV MODE: local Sign in popup enabled (any name is accepted)")
+    app.run(host='127.0.0.1', port=5000, debug=True)

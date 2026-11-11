@@ -1,0 +1,21 @@
+{
+  "sha256": "<replaced by the test>",
+  "last_file_name": "a.sh",
+  "threat_score": 100,
+  "verdict": "malicious",
+  "vx_family": "Linux.Mirai",
+  "tags": ["mirai", "botnet"],
+  "type": "Bourne-Again shell script, ASCII text executable",
+  "type_short": ["sh"],
+  "size": 312,
+  "architecture": null,
+  "multiscan_result": 87,
+  "submitted_at": "2026-01-01T10:00:00+00:00",
+  "analysis_start_time": "2026-01-01T10:01:00+00:00",
+  "last_multi_scan": "2026-01-01T10:05:00+00:00",
+  "whitelisted": false,
+  "reports": ["65f0aa000000000000000001"],
+  "related_reports": [
+    {"job_id": "65f0aa000000000000000001", "environment_id": 330, "environment_description": "Linux (Ubuntu 24.04, 64 bit)", "state": "SUCCESS", "verdict": "malicious", "threat_score": 100}
+  ]
+}

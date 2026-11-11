@@ -7,7 +7,7 @@ import requests
 import logging
 import signal
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from apscheduler.schedulers.background import BlockingScheduler
 
 # Add to path the "one directory above the current file location" to find modules from "common"
@@ -16,12 +16,27 @@ from common.config import Config
 from common.db import SQLiteWrapper
 from common.utils import is_valid, get_domain
 
+logger = logging.getLogger("honeynetasia2evaluator.py")
+
+# Module state, set by init() (called from __main__ and by tests)
+config = None
+
+
+def init(cfg):
+    """Set the module state from `cfg`. Called by __main__ and by tests."""
+    global config
+    config = cfg
+
 
 def honeynetasia2evaluator():
     logger.info("Job started")
     logger.debug(f"Downloading data from {config.hna_url}")
-    current_date = datetime.date(datetime.utcnow())
-    response = requests.get(config.hna_url, timeout=30)
+    current_date = datetime.now(timezone.utc).date().isoformat()
+    try:
+        response = requests.get(config.hna_url, timeout=30)
+    except requests.RequestException as e:
+        logger.error(f"Error while downloading data: {type(e).__name__}: {e}")
+        return
     if response.status_code != 200:
         logger.error(f"Error while downloading data. Status code: {response.status_code}")
         return
@@ -30,9 +45,9 @@ def honeynetasia2evaluator():
     num_inserted = 0
     with SQLiteWrapper(config.db_path) as db:
         for line in response.content.splitlines():
-            url = line.decode().strip()
+            url = line.decode(errors="replace").strip()
             # de-sanitize hxxp(s) -> http(s)
-            url = re.sub(r'^hxxp(s?)://', r'http\1://')
+            url = re.sub(r'^hxxp(s?)://', r'http\1://', url)
             if not is_valid(url):
                 logger.warning(f"Invalid URL '{url}' skipped")
                 continue
@@ -43,6 +58,10 @@ def honeynetasia2evaluator():
                     occurrences = urls.occurrences + 1;
             """, (url, current_date, current_date, get_domain(url))).rowcount
             db.execute("INSERT OR IGNORE INTO url_source (url, source) VALUES (?, ?)", (url, "HoneyNet.Asia"))
+            db.execute(
+                "INSERT OR IGNORE INTO observations (url, source, honeynet, session, observed_at) VALUES (?, ?, ?, ?, ?)",
+                (url, "HoneyNet.Asia", None, None, current_date)
+            )
     logger.info(f"{num_inserted} URLs inserted or updated")
     logger.info("Job finished")
 
@@ -64,14 +83,13 @@ if __name__ == "__main__":
     LOGFORMAT = "%(asctime)-15s %(name)s [%(levelname)s] %(message)s"
     LOGDATEFORMAT = "%Y-%m-%dT%H:%M:%S"
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
-    logger = logging.getLogger("honeynetasia2evaluator.py")
     if args.verbose:
         logger.setLevel('DEBUG')
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
     try:
-        config = Config(args.config)
+        init(Config(args.config))
     except Exception as e:
         logger.fatal(f"Error while loading configuration file: {e}")
         sys.exit(1)
