@@ -238,7 +238,7 @@ def sync_urls(misp, db):
         else:
             # URL was deleted, remove it from MISP too
             logger.debug(f"Deleting old URL: {url}")
-            event.delete_object(obj.id)
+            obj.delete()  # soft delete, sent by update_event (delete_object(id) fails on the int id of a loaded event)
 
     # Update event
     event = misp.update_event(event, pythonify=True)

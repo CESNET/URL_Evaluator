@@ -254,7 +254,7 @@ def test_create_object_of_inactive_miner_on_domain(evaluator2misp_mod):
 
 def misp_object(module, row):
     obj = module.create_object(row)
-    obj.id = str(abs(hash(row["url"])) % 10 ** 6)
+    obj.id = abs(hash(row["url"])) % 10 ** 6  # int, as PyMISP returns it for an event loaded from MISP
     return obj
 
 
@@ -445,6 +445,18 @@ def test_bysource_nested_download_goes_to_the_source_of_the_first_url(
     evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
 
     assert event_urls(events_by_source, "GEANT T-Pot") == {loader, stage2, payload}
+
+
+def test_bysource_deletes_urls_no_longer_in_the_db(evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
+    kept = insert_url(db, "http://hna.test/a.sh", classification="malicious", last_seen="2099-01-01")
+    insert_source(db, kept, "HoneyNet.Asia")
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)  # creates the event
+    event = events_by_source["Malicious URLs from SSH honeypots (HoneyNet.Asia)"]
+    event.add_object(misp_object(evaluator2misp_bysource_mod, db_row(url="http://deleted.test/")))
+
+    evaluator2misp_bysource_mod.sync_urls(fake_misp, db)
+
+    assert set(objects_by_url(event)) == {kept}
 
 
 def test_bysource_exports_sha256_of_the_latest_download(evaluator2misp_bysource_mod, fake_misp, events_by_source, db):
