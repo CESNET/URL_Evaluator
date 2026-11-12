@@ -445,15 +445,38 @@ def _fetch_and_store_content(url):
         return Content(hashlib.sha1(body).hexdigest(), body, content_size, file_type)
 
 
+MB_ATTEMPTS = 3      # tries per lookup when MalwareBazaar is temporarily unavailable
+MB_RETRY_DELAY = 2   # seconds before the first retry, doubled for each next one
+
+
 def mb_file_check(sha1):
-    """Return a MalwareBazaar classification dict when the SHA-1 is known, else None."""
-    mb_resp = None
-    try:
-        mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1}, headers={'Auth-Key': config.mb_key})
-        if mb_resp.json().get('query_status') == 'ok':
-            return dict(classification="malicious", classification_reason="MB file check")
-    except Exception as e:
-        logger.warning(f"Unexpected response from MalwareBazaar: {mb_resp if mb_resp is not None else e}")
+    """
+    Return a MalwareBazaar classification dict when the SHA-1 is known, else None.
+
+    Temporary failures (HTTP 5xx / 429 from the abuse.ch gateway, network errors)
+    are retried; a warning is logged only when all attempts fail.
+    """
+    error = None
+    for attempt in range(MB_ATTEMPTS):
+        if attempt:
+            time.sleep(MB_RETRY_DELAY * 2 ** (attempt - 1))
+        try:
+            mb_resp = requests.post(config.mb_url, data={'query': 'get_info', 'hash': sha1},
+                                    headers={'Auth-Key': config.mb_key}, timeout=30)
+        except requests.exceptions.RequestException as e:
+            error = e
+            continue
+        if mb_resp.status_code >= 500 or mb_resp.status_code == 429:
+            error = f"HTTP {mb_resp.status_code}"
+            logger.debug(f"MalwareBazaar temporarily unavailable ({error}), attempt {attempt + 1}/{MB_ATTEMPTS}")
+            continue
+        try:
+            if mb_resp.json().get('query_status') == 'ok':
+                return dict(classification="malicious", classification_reason="MB file check")
+        except Exception:
+            logger.warning(f"Unexpected response from MalwareBazaar: HTTP {mb_resp.status_code} {mb_resp.text[:200]!r}")
+        return None
+    logger.warning(f"MalwareBazaar lookup of {sha1} failed after {MB_ATTEMPTS} attempts: {error}")
     return None
 
 

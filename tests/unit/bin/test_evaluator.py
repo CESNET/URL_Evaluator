@@ -14,7 +14,7 @@ from freezegun import freeze_time
 from bin.evaluator import NO_CONTENT, Content
 from common import file_classifier, hybrid_analysis
 from tests.api_mocks import (VT_API, load_bytes, load_json, mock_blacklist, mock_external_apis, mock_ha_overview,
-                             mock_vt)
+                             mock_mb, mock_vt)
 from tests.factories import insert_content, insert_discovered, insert_download, insert_sandbox_submission, insert_url
 
 URL = "http://evil.test/a.sh"
@@ -348,16 +348,33 @@ def test_analyze_content_without_usable_body(evaluator_mod, http_mock, content, 
     assert len(http_mock.calls) == 0  # no VirusTotal lookup
 
 
-def test_malwarebazaar_error_falls_back_to_virustotal(evaluator_mod, http_mock, config, db):
+def test_malwarebazaar_error_falls_back_to_virustotal(evaluator_mod, http_mock, config, db, monkeypatch):
+    monkeypatch.setattr(evaluator_mod, "MB_RETRY_DELAY", 0)
     insert_url(db, URL)
     serve(http_mock)
     apis = mock_external_apis(http_mock, config, vt_file="file_harmless.json")
-    http_mock.replace(responses.POST, config.mb_url, body="<html>502 Bad Gateway</html>", status=502)
+    mb = http_mock.replace(responses.POST, config.mb_url, body="<html>502 Bad Gateway</html>", status=502)
 
     result = evaluator_mod.evaluate_url(URL)
 
+    assert mb.call_count == evaluator_mod.MB_ATTEMPTS
     assert result["classification_reason"] == "VT file check"
     assert apis["vt_file"].call_count == 1
+
+
+def test_malwarebazaar_temporary_error_is_retried(evaluator_mod, http_mock, config, db, monkeypatch):
+    monkeypatch.setattr(evaluator_mod, "MB_RETRY_DELAY", 0)
+    insert_url(db, URL)
+    serve(http_mock)
+    apis = mock_external_apis(http_mock, config)
+    http_mock.remove(responses.POST, config.mb_url)
+    http_mock.post(config.mb_url, body="<html>502 Bad Gateway</html>", status=502)
+    mock_mb(http_mock, config, known=True)
+
+    result = evaluator_mod.evaluate_url(URL)
+
+    assert result["classification_reason"] == "MB file check"
+    assert apis["vt_url"].call_count == 0
 
 
 # --- URLhaus blacklist cache ---
