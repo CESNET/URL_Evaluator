@@ -736,6 +736,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format=LOGFORMAT, datefmt=LOGDATEFORMAT)
     if args.verbose:
         logger.setLevel('DEBUG')
+    # No APScheduler logs about the Hybrid Analysis fetch job (job added, scheduler started / shut down)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
     # Load config
     logger.debug(f"Loading config from {args.config}")
