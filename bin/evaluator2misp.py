@@ -130,6 +130,7 @@ def sync_urls(misp, db):
       - update 'to_ids' flags based on URL activity
       - delete outdated records
     """
+    changed = False
 
     # Load all malicious/miner URLs from the DB
     cutoff_date = (date.today() - timedelta(days=config.misp_max_age)).strftime("%Y-%m-%d")
@@ -166,12 +167,14 @@ def sync_urls(misp, db):
         if url not in misp_urls:
             logger.debug(f"Adding new URL: {url}")
             event.add_object(create_object(db_row))
+            changed = True
 
     # Update existing URLs
     for obj in list(event.objects):
         url = obj.get_attributes_by_relation("url")[0]
         last_seen = obj.get_attributes_by_relation("last-seen")[0]
         source = obj.get_attributes_by_relation("source")[0]
+
         if url.value in db_urls:
             if (url.to_ids is False and db_urls[url.value][6] == 'active') or \
                (url.to_ids is True and db_urls[url.value][6] != 'active'):
@@ -180,18 +183,28 @@ def sync_urls(misp, db):
                 url.to_ids = True if db_urls[url.value][6] == 'active' else False
                 if ip := obj.get_attributes_by_relation("ip-dst|port"):
                     ip[0].to_ids = url.to_ids
+                changed = True
+
             if not last_seen.value.isoformat().startswith(db_urls[url.value][3]):
                 # Last seen timestamp is outdated
                 logger.debug(f"Updating last-seen for '{url.value}'")
                 last_seen.value = db_urls[url.value][3]
+                changed = True
+
             if source.value != db_urls[url.value][8]:
                 # New source(s) reported the URL
                 logger.debug(f"Updating source for '{url.value}'")
                 source.value = db_urls[url.value][8]
+                changed = True
         else:
             # URL was deleted, remove it from MISP too
             logger.debug(f"Deleting old URL: {url}")
             event.delete_object(obj.id)
+            changed = True
+
+    if not changed:
+        logger.info("Event unchanged, skipping update/publish")
+        return
 
     # Update event
     event = misp.update_event(event, pythonify=True)
