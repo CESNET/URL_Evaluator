@@ -28,6 +28,9 @@ scheduler:
   evaluator2misp_bysource:
     hour: 12
     minute: 30
+  evaluator2misp_sightings:
+    hour: 0
+    minute: 30
 
 # Max age of inactive/invalid URLs
 # Older records are automatically deleted

@@ -221,26 +221,6 @@ def sync_urls(misp, db):
     misp.publish(event.id, alert=False)
 
 
-def add_yesterdays_sightings(misp, db):
-    """
-    Add sightings to URLS that were last seen yesterday
-    """
-
-    # Load URLs that were seen yesterday
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-    rows = db.execute("SELECT url FROM urls WHERE last_seen=? AND (classification='malicious' OR classification='miner')", (yesterday,)).fetchall()
-    if not rows:
-        logger.info("No malicious URLs from yesterday")
-        return
-    logger.info(f"Found {len(rows)} malicious URLs from yesterday")
-
-    # Add sightings to MISP
-    logger.info("Adding new sightings")
-    for row in rows:
-        misp.add_sighting({"value": row[0]})
-    logger.debug("Done")
-
-
 def evaluator2misp():
     logger.info("Job started")
     db = SQLiteWrapper(config.db_path)
@@ -258,13 +238,6 @@ def evaluator2misp():
         logger.exception(f"Failed to sync data with MISP: {type(e).__name__}: {e}")
         db.close()
         sys.exit(2)
-
-    try:
-        add_yesterdays_sightings(misp, db)
-    except Exception as e:
-        logger.exception(f"Failed to add new sightings: {type(e).__name__}: {e}")
-        db.close()
-        sys.exit(3)
 
     db.close()
     logger.info("Job finished")
